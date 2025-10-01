@@ -63,7 +63,6 @@ pub struct DffFile {
     frm_chunk: FormDsdChunk,
     fver_chunk: FormatVersionChunk,
     prop_chunk: PropertyChunk,
-    dsd_data_chunk: DsdSoundDataChunk,
     id3_tag: Option<Tag>,
 }
 impl DffFile {
@@ -112,6 +111,8 @@ impl DffFile {
             file,
             frm_chunk,
             prop_chunk,
+            fver_chunk,
+            id3_tag: todo!(),
         })
     }
 
@@ -119,24 +120,6 @@ impl DffFile {
     #[must_use]
     pub fn file(&self) -> &File {
         &self.file
-    }
-
-    /// Return a reference to the [`DsdChunk`](struct.DsdChunk.html).
-    #[must_use]
-    pub fn dsd_chunk(&self) -> &DsdChunk {
-        &self.dsd_chunk
-    }
-
-    /// Return a reference to the [`FmtChunk`](struct.FmtChunk.html).
-    #[must_use]
-    pub fn fmt_chunk(&self) -> &FmtChunk {
-        &self.fmt_chunk
-    }
-
-    /// Return a reference to the [`DataChunk`](struct.DataChunk.html).
-    #[must_use]
-    pub fn data_chunk(&self) -> &DataChunk {
-        &self.data_chunk
     }
 
     /// Return a reference to the optional `ID3v2` [Tag](id3::Tag).
@@ -175,8 +158,8 @@ impl fmt::Display for DffFile {
         };
         write!(
             f,
-            "DSD chunk:\n{}\n\nFmt chunk:\n{}\n\nData chunk:\n{}\n\nID3Tag:\n{}",
-            self.dsd_chunk, self.fmt_chunk, self.data_chunk, &id3_tag_as_string,
+            "ID3Tag:\n{}",
+            &id3_tag_as_string,
         )
     }
 }
@@ -556,296 +539,6 @@ impl TryFrom<[u8; 28]> for DsdChunk {
     }
 }
 
-/// The first four bytes of the [`FmtChunk`](struct.FmtChunk.html).
-const FMT_CHUNK_HEADER: [u8; 4] = [b'f', b'm', b't', b' '];
-
-/// The fmt chunk contains information about the audio format.
-///
-/// - Channel type: mono, stereo, 5.1, etc.
-/// - Channel number: 1 for mono, 2 for stereo, etc.
-/// - Sampling frequency: the DSD sampling frequency.
-/// - Bits per sample: whether the samples are big or little endian encoded.
-/// - Block size per channel: this should always be 4096 bytes.
-pub struct FmtChunk {
-    channel_type: ChannelType,
-    channel_num: u32,
-    sampling_frequency: u32,
-    bits_per_sample: u32,
-    sample_count: u64,
-    block_size_per_channel: u32,
-}
-impl FmtChunk {
-    /// Make a new `FmtChunk`.
-    fn new(
-        channel_type: ChannelType,
-        channel_num: u32,
-        sampling_frequency: u32,
-        bits_per_sample: u32,
-        sample_count: u64,
-        block_size_per_channel: u32,
-    ) -> FmtChunk {
-        FmtChunk {
-            channel_type,
-            channel_num,
-            sampling_frequency,
-            bits_per_sample,
-            sample_count,
-            block_size_per_channel,
-        }
-    }
-
-    /// Return a reference to the
-    /// [`ChannelType`](enum.ChannelType.html).
-    #[must_use]
-    pub fn channel_type(&self) -> &ChannelType {
-        &self.channel_type
-    }
-
-    /// Return the number of channels. This should be in the range 1
-    /// to 6.
-    #[must_use]
-    pub fn channel_num(&self) -> u32 {
-        self.channel_num
-    }
-
-    /// Return the sampling freqency. DSD sampling frequencies are
-    /// much higher than PCM because of the 1-bit sampling, so you
-    /// should get values like:
-    ///
-    /// -  2822400 Hz for DSD64
-    /// -  5644800 Hz for DSD128
-    /// - 11289600 Hz for DSD256
-    ///
-    /// and so on.
-    #[must_use]
-    pub fn sampling_frequency(&self) -> u32 {
-        self.sampling_frequency
-    }
-
-    /// Returns the `bits_per_sample` field. This is a bit of a
-    /// misnomer in my opinion, but that’s what’s in the DSF
-    /// specification. If it is equal to 1 then the sample data is
-    /// stored least significant bit first. If it is equal to 8 then
-    /// the sample data is stored most significant bit first.
-    // TODO: Consider creating an endian-ness field instead to replace
-    // this field
-    #[must_use]
-    pub fn bits_per_sample(&self) -> u32 {
-        self.bits_per_sample
-    }
-
-    /// Return the number of DSD samples per channel.
-    #[must_use]
-    pub fn sample_count(&self) -> u64 {
-        self.sample_count
-    }
-
-    /// Return the block size per channel in bytes. This is fixed and
-    /// should always be 4096 bytes.
-    #[must_use]
-    pub fn block_size_per_channel(&self) -> u32 {
-        self.block_size_per_channel
-    }
-
-    /// Return the duration of the audio.
-    fn duration(&self) -> ConstantRateDuration {
-        ConstantRateDuration::new(self.sample_count, u64::from(self.sampling_frequency))
-    }
-}
-impl fmt::Display for FmtChunk {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(
-            f,
-            "Channel type = {}
-Channel number = {}
-Sampling frequency = {} Hz
-Bits per sample = {}
-Sample count per channel = {}
-Block size per channel = {} bytes
-Calculated duration = {} h:min:s;samples",
-            self.channel_type,
-            self.channel_num,
-            self.sampling_frequency,
-            self.bits_per_sample,
-            self.sample_count,
-            self.block_size_per_channel,
-            self.duration()
-        )
-    }
-}
-impl TryFrom<[u8; 52]> for FmtChunk {
-    type Error = Error;
-
-    fn try_from(buffer: [u8; 52]) -> Result<Self, Self::Error> {
-        if buffer[0..4] != FMT_CHUNK_HEADER {
-            return Err(Error::FmtChunkHeader);
-        }
-
-        let chunk_size = u64_from_byte_buffer(&buffer, 4);
-        if chunk_size != 52 {
-            return Err(Error::FmtChunkSize);
-        }
-
-        let format_version = u32_from_byte_buffer(&buffer, 12);
-        if format_version != 1 {
-            return Err(Error::FormatVersion);
-        }
-
-        let format_id = u32_from_byte_buffer(&buffer, 16);
-        if format_id != 0 {
-            return Err(Error::FormatId);
-        }
-
-        let channel_type = ChannelType::try_from(u32_from_byte_buffer(&buffer, 20))?;
-
-        let channel_num = u32_from_byte_buffer(&buffer, 24);
-        match channel_num {
-            1 | 2 | 3 | 4 | 5 | 6 => (),
-            _ => return Err(Error::ChannelNum),
-        }
-
-        let sampling_frequency = u32_from_byte_buffer(&buffer, 28);
-        let bits_per_sample = u32_from_byte_buffer(&buffer, 32);
-        let sample_count = u64_from_byte_buffer(&buffer, 36);
-
-        let block_size_per_channel = u32_from_byte_buffer(&buffer, 44);
-        if block_size_per_channel != BLOCK_SIZE_AS_U32 {
-            return Err(Error::BlockSizePerChannelNonStandard);
-        }
-
-        let reserved = u32_from_byte_buffer(&buffer, 48);
-        if reserved != 0 {
-            return Err(Error::ReservedNotZero);
-        }
-
-        Ok(FmtChunk::new(
-            channel_type,
-            channel_num,
-            sampling_frequency,
-            bits_per_sample,
-            sample_count,
-            block_size_per_channel,
-        ))
-    }
-}
-
-/// The different channel formats possible for a DSF file.
-///
-/// The channel specification is as follows:
-///
-/// <table style="empty-cells: hide;">
-/// <tr><td></td><th style="text-align: center;" colspan="6">Channel Index</th></tr>
-/// <tr><th>Channel Type</th><th>0</th><th>1</th><th>2</th><th>3</th><th>4</th><th>5</th></tr>
-/// <tr><th>Mono</th>
-///   <td>Center</td>
-///   <td></td><td></td><td></td><td></td><td></td>
-/// </tr>
-/// <tr><th>Stereo</th>
-///   <td>Front Left</td><td>Front Right</td>
-///   <td></td><td></td><td></td><td></td>
-/// </tr>
-/// <tr><th>3-Channels</th>
-///   <td>Front Left</td><td>Front Right</td><td>Center</td>
-///   <td></td><td></td><td></td>
-/// </tr>
-/// <tr><th>Quad</th>
-///   <td>Front Left</td><td>Front Right</td><td>Back Left</td>
-///   <td>Back Right</td><td></td><td></td>
-/// </tr>
-/// <tr><th>4-Channels</th>
-///   <td>Front Left</td><td>Front Right</td><td>Center</td>
-///   <td>Low Frequency</td><td></td><td></td>
-/// </tr>
-/// <tr><th>5-Channels</th>
-///   <td>Front Left</td><td>Front Right</td><td>Center</td>
-///   <td>Back Left</td><td>Back Right</td><td></td>
-/// </tr>
-/// <tr><th>5.1-Channels</th>
-///   <td>Front Left</td><td>Front Right</td><td>Center</td>
-///   <td>Low Frequency</td><td>Back Left</td><td>Back Right</td>
-/// </tr>
-/// </table>
-#[derive(Debug, Eq, PartialEq)]
-pub enum ChannelType {
-    Mono,
-    Stereo,
-    ThreeChannels,
-    Quad,
-    FourChannels,
-    FiveChannels,
-    FivePointOneChannels,
-}
-impl fmt::Display for ChannelType {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let channel_type_as_str = match self {
-            ChannelType::Mono => "Mono",
-            ChannelType::Stereo => "Stereo: FL, FR.",
-            ChannelType::ThreeChannels => "3 channels: FL, FR, C.",
-            ChannelType::Quad => "Quad: FL, FR, BL, BR.",
-            ChannelType::FourChannels => "4 channels: FL, FR, C, LFE.",
-            ChannelType::FiveChannels => "5 channels: FL, FR, C, BL, BR.",
-            ChannelType::FivePoint.OneChannels => "5.1 channels: FL, FR, C, LFE, BL, BR.",
-        };
-
-        write!(f, "{}", channel_type_as_str)
-    }
-}
-impl TryFrom<u32> for ChannelType {
-    type Error = Error;
-
-    fn try_from(channel_type_as_u32: u32) -> Result<Self, Self::Error> {
-        match channel_type_as_u32 {
-            1 => Ok(ChannelType::Mono),
-            2 => Ok(ChannelType::Stereo),
-            3 => Ok(ChannelType::ThreeChannels),
-            4 => Ok(ChannelType::Quad),
-            5 => Ok(ChannelType::FourChannels),
-            6 => Ok(ChannelType::FiveChannels),
-            7 => Ok(ChannelType::FivePoint.OneChannels),
-            _ => Err(Error::ChannelType),
-        }
-    }
-}
-
-/// First four bytes of the [`DataChunk`](struct.DataChunk.html).
-const DATA_CHUNK_HEADER: [u8; 4] = [b'd', b'a', b't', b'a'];
-
-/// The data chunk contains the DSD sample data.
-pub struct DataChunk {
-    chunk_size: u64,
-}
-impl DataChunk {
-    /// Make a new `DataChunk`.
-    fn new(chunk_size: u64) -> DataChunk {
-        DataChunk { chunk_size }
-    }
-
-    /// The size of the data chunk in bytes. This is equal to the
-    /// sample data + 12 bytes. The extra 12 bytes are taken up by the
-    /// data chunk header and this size field.
-    #[must_use]
-    pub fn chunk_size(&self) -> u64 {
-        self.chunk_size
-    }
-}
-impl fmt::Display for DataChunk {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Data chunk size = {} bytes", self.chunk_size)
-    }
-}
-impl TryFrom<[u8; 12]> for DataChunk {
-    type Error = Error;
-
-    fn try_from(buffer: [u8; 12]) -> Result<Self, Self::Error> {
-        if buffer[0..4] != DATA_CHUNK_HEADER {
-            return Err(Error::DataChunkHeader);
-        }
-
-        let chunk_size = u64_from_byte_buffer(&buffer, 4);
-
-        Ok(DataChunk::new(chunk_size))
-    }
-}
 
 /// The block size is always 4096 bytes.
 const BLOCK_SIZE: usize = 4096;
@@ -890,19 +583,16 @@ pub struct Frames<'a> {
 impl<'a> Frames<'a> {
     /// Make a new `Frames` struct from the `dsf_file`.
     fn new(dsf_file: &mut DffFile) -> Result<Frames, Error> {
-        let channels = dsf_file.fmt_chunk.channel_num as usize;
-        let frame_count = dsf_file.fmt_chunk.sample_count / SAMPLES_PER_BLOCK;
+        // Hardcoded for now, we will read this from the fmt chunk later.
+        let channels = 2 as usize;
+        let frame_count = SAMPLES_PER_BLOCK;
 
         let mut frame: Vec<[u8; BLOCK_SIZE]> = Vec::with_capacity(channels);
         for _ in 0..channels {
             frame.push([0; BLOCK_SIZE]);
         }
 
-        let reverse_bits = match dsf_file.fmt_chunk.bits_per_sample {
-            1 => true,
-            8 => false,
-            _ => panic!("Illegal value for bits_per_sample"),
-        };
+        let reverse_bits = false;
 
         let mut frames = Frames {
             channels,
@@ -947,37 +637,6 @@ impl<'a> Frames<'a> {
         debug_assert!(frame_index <= self.frame_count);
 
         SAMPLE_DATA_OFFSET + frame_index * (BLOCK_SIZE * self.channels) as u64
-    }
-
-    /// Return the frame and block index as a tuple `(frame_index,
-    /// block_index)` for the given `sample_index` if they exist or a
-    /// out of range error if `sample_index >= sample_count`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if `sample_index >= sample_count`.
-    pub fn frame_and_block_index(&self, sample_index: u64) -> Result<(u64, usize), Error> {
-        if sample_index >= self.dsf_file.fmt_chunk.sample_count {
-            return Err(Error::SampleIndexOutOfRange);
-        }
-
-        Ok(self.frame_and_block_index_unchecked(sample_index))
-    }
-
-    /// Return the frame and block index as a tuple `(frame_index,
-    /// block_index)` for the given `sample_index`.
-    ///
-    /// This method panics if `sample_index` is out of range e.g. if
-    /// `sample_index >= sample_count`. Use the checked version of
-    /// this method `frame_and_block_index()` when you can not be sure
-    /// of the correctness of the provided value of `sample_index`.
-    fn frame_and_block_index_unchecked(&self, sample_index: u64) -> (u64, usize) {
-        debug_assert!(sample_index < self.dsf_file.fmt_chunk.sample_count);
-
-        let frame_index = sample_index / SAMPLES_PER_BLOCK;
-        let block_index = ((sample_index % SAMPLES_PER_BLOCK) / 8) as usize;
-
-        (frame_index, block_index)
     }
 
     /// Load the frame specified by `frame_index` into memory.
@@ -1046,7 +705,8 @@ impl<'a> Frames<'a> {
             return Err(Error::ChannelIndexOutOfRange);
         }
 
-        let (frame_index, block_index) = self.frame_and_block_index(sample_index)?;
+        // Hardcoded for now, we will read this from the fmt chunk later.
+        let (frame_index, block_index) = (0,0);
 
         if self.frame_index != frame_index {
             self.load_frame(frame_index)?;
@@ -1078,7 +738,8 @@ impl<'a> Frames<'a> {
     ) -> Result<u32, Error> {
         debug_assert!(channel_index < self.channels);
 
-        let (frame_index, block_index) = self.frame_and_block_index_unchecked(sample_index);
+        // Hardcoded for now, we will read this from the fmt chunk later.
+        let (frame_index, block_index) = (0, 0);
 
         if self.frame_index != frame_index {
             self.load_frame_unchecked(frame_index)?;
@@ -1121,8 +782,9 @@ pub struct InterleavedU32SamplesIter<'a> {
 impl<'a> InterleavedU32SamplesIter<'a> {
     /// Make a new `InterleavedU32SamplesIter` for the specified `dsf_file`.
     fn new(dsf_file: &mut DffFile) -> Result<InterleavedU32SamplesIter, Error> {
-        let channels = dsf_file.fmt_chunk.channel_num as usize;
-        let sample_count = dsf_file.fmt_chunk.sample_count;
+        // Hardcoded for now, we will read this from the fmt chunk later.
+        let channels = 2 as usize;
+        let sample_count = SAMPLES_PER_BLOCK;
         let frames = Frames::new(dsf_file)?;
 
         Ok(InterleavedU32SamplesIter {
