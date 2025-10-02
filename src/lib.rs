@@ -39,9 +39,9 @@ use std::convert::TryFrom;
 use std::fmt;
 use std::fs::File;
 use std::io;
-use std::io::prelude::*;
 use std::io::Read;
 use std::io::SeekFrom;
+use std::io::prelude::*;
 use std::path::Path;
 use std::u64;
 
@@ -61,8 +61,6 @@ use std::u64;
 pub struct DffFile {
     file: File,
     frm_chunk: FormDsdChunk,
-    fver_chunk: FormatVersionChunk,
-    prop_chunk: PropertyChunk,
     id3_tag: Option<Tag>,
 }
 impl DffFile {
@@ -97,21 +95,164 @@ impl DffFile {
 
         let mut frm_chunk_buffer: [u8; 16] = [0; 16];
         file.read_exact(&mut frm_chunk_buffer)?;
-        let frm_chunk = FormDsdChunk::try_from(frm_chunk_buffer)?;
+        let mut frm_chunk = FormDsdChunk::try_from(frm_chunk_buffer)?;
 
         let mut fver_chunk_buffer: [u8; 16] = [0; 16];
         file.read_exact(&mut fver_chunk_buffer)?;
         let fver_chunk = FormatVersionChunk::try_from(fver_chunk_buffer)?;
+        // Store the parsed FormatVersionChunk's inner Chunk in the FORM chunk data.
+        frm_chunk
+            .chunk
+            .data
+            .push(ChunkDataType::Chunk(fver_chunk.chunk));
 
         let mut prop_chunk_buffer: [u8; 16] = [0; 16];
         file.read_exact(&mut prop_chunk_buffer)?;
         let prop_chunk = PropertyChunk::try_from(prop_chunk_buffer)?;
+        let prop_data_size = prop_chunk.chunk.header.ck_data_size;
+        frm_chunk
+            .chunk
+            .data
+            .push(ChunkDataType::Chunk(prop_chunk.chunk));
+
+        let prop_data_offset = file.stream_position()? - 4;
+        let mut chunk_header_buffer: [u8; CHUNK_HEADER_SIZE as usize] =
+            [0; CHUNK_HEADER_SIZE as usize];
+
+        while file.stream_position().unwrap()
+            < prop_data_offset + prop_data_size as u64
+            && file.read_exact(&mut chunk_header_buffer).is_ok()
+        {
+            let ck_id = u32_from_byte_buffer(&chunk_header_buffer, 0);
+            let ck_data_size = u64_from_byte_buffer(&chunk_header_buffer, 4);
+
+            match ck_id {
+                FS_LABEL => {
+                    // FS chunk has 4 bytes of data.
+                    let mut chunk_data_buffer: [u8; 4] = [0; 4];
+                    file.read_exact(&mut chunk_data_buffer)?;
+                    let fs_chunk = SampleRateChunk::try_from({
+                        let mut buf = [0u8; 16];
+                        buf[0..12].copy_from_slice(&chunk_header_buffer);
+                        buf[12..16].copy_from_slice(&chunk_data_buffer);
+                        buf
+                    })?;
+                    if let Some(ChunkDataType::Chunk(prop_chunk_inner)) =
+                        frm_chunk.chunk.data.get_mut(1)
+                    {
+                        prop_chunk_inner
+                            .data
+                            .push(ChunkDataType::Chunk(fs_chunk.chunk));
+                    }
+                }
+                CHNL_LABEL => {
+                    // Read CHNL chunk data (channel count + IDs).
+                    let mut data_buf = vec![0u8; ck_data_size as usize];
+                    file.read_exact(&mut data_buf)?;
+                    let mut full_buf = Vec::with_capacity(12 + data_buf.len());
+                    full_buf.extend_from_slice(&chunk_header_buffer);
+                    full_buf.extend_from_slice(&data_buf);
+                    if let Ok(chnl_chunk) = ChannelsChunk::try_from(full_buf.as_slice()) {
+                        if let Some(ChunkDataType::Chunk(prop_chunk_inner)) =
+                            frm_chunk.chunk.data.get_mut(1)
+                        {
+                            prop_chunk_inner
+                                .data
+                                .push(ChunkDataType::Chunk(chnl_chunk.chunk));
+                        }
+                    }
+                }
+                COMP_LABEL => {
+                    // Compression Type chunk (CMPR): variable length.
+                    let mut data_buf = vec![0u8; ck_data_size as usize];
+                    file.read_exact(&mut data_buf)?;
+                    let mut full_buf = Vec::with_capacity(12 + data_buf.len());
+                    full_buf.extend_from_slice(&chunk_header_buffer);
+                    full_buf.extend_from_slice(&data_buf);
+                    if let Some(ChunkDataType::Chunk(prop_chunk_inner)) =
+                        frm_chunk.chunk.data.get_mut(1)
+                    {
+                        if let Ok(cmpr_chunk) =
+                            CompressionTypeChunk::try_from(full_buf.as_slice())
+                        {
+                            prop_chunk_inner
+                                .data
+                                .push(ChunkDataType::Chunk(cmpr_chunk.chunk));
+                        } else {
+                            // Fallback: store raw header if parse fails.
+                            prop_chunk_inner.data.push(ChunkDataType::Chunk(Chunk {
+                                header: ChunkHeader { ck_id, ck_data_size },
+                                data: vec![],
+                            }));
+                        }
+                    }
+                }
+                ABS_TIME_LABEL => {
+                    // Absolute Start Time chunk (ABSS)
+                    let mut data_buf = vec![0u8; ck_data_size as usize];
+                    file.read_exact(&mut data_buf)?;
+                    let mut full_buf = Vec::with_capacity(12 + data_buf.len());
+                    full_buf.extend_from_slice(&chunk_header_buffer);
+                    full_buf.extend_from_slice(&data_buf);
+                    if let Some(ChunkDataType::Chunk(prop_chunk_inner)) =
+                        frm_chunk.chunk.data.get_mut(1)
+                    {
+                        if let Ok(abs_chunk) =
+                            AbsoluteStartTimeChunk::try_from(full_buf.as_slice())
+                        {
+                            prop_chunk_inner
+                                .data
+                                .push(ChunkDataType::Chunk(abs_chunk.chunk));
+                        } else {
+                            prop_chunk_inner.data.push(ChunkDataType::Chunk(Chunk {
+                                header: ChunkHeader { ck_id, ck_data_size },
+                                data: vec![],
+                            }));
+                        }
+                    }
+                }
+                LS_CONF_LABEL => {
+                    // Loudspeaker Configuration chunk (LSCO)
+                    let mut data_buf = vec![0u8; ck_data_size as usize];
+                    file.read_exact(&mut data_buf)?;
+                    let mut full_buf = Vec::with_capacity(12 + data_buf.len());
+                    full_buf.extend_from_slice(&chunk_header_buffer);
+                    full_buf.extend_from_slice(&data_buf);
+                    if let Some(ChunkDataType::Chunk(prop_chunk_inner)) =
+                        frm_chunk.chunk.data.get_mut(1)
+                    {
+                        if let Ok(lsco_chunk) =
+                            LoudspeakerConfigChunk::try_from(full_buf.as_slice())
+                        {
+                            prop_chunk_inner
+                                .data
+                                .push(ChunkDataType::Chunk(lsco_chunk.chunk));
+                        } else {
+                            prop_chunk_inner.data.push(ChunkDataType::Chunk(Chunk {
+                                header: ChunkHeader { ck_id, ck_data_size },
+                                data: vec![],
+                            }));
+                        }
+                    }
+                }
+                _ => {
+                    // Unknown (or unhandled) chunk: skip its data but record header.
+                    file.seek(SeekFrom::Current(ck_data_size as i64))?;
+                    let unknown_chunk = Chunk {
+                        header: ChunkHeader { ck_id, ck_data_size },
+                        data: vec![],
+                    };
+                    frm_chunk
+                        .chunk
+                        .data
+                        .push(ChunkDataType::Chunk(unknown_chunk));
+                }
+            }
+        }
 
         Ok(DffFile {
             file,
             frm_chunk,
-            prop_chunk,
-            fver_chunk,
             id3_tag: todo!(),
         })
     }
@@ -156,11 +297,7 @@ impl fmt::Display for DffFile {
             Some(tag) => id3_tag_to_string(tag),
             None => String::from("None"),
         };
-        write!(
-            f,
-            "ID3Tag:\n{}",
-            &id3_tag_as_string,
-        )
+        write!(f, "ID3Tag:\n{}", &id3_tag_as_string,)
     }
 }
 
@@ -214,6 +351,15 @@ pub enum Error {
     FsChunkSize,
     ChnlChunkHeader,
     ChnlChunkSize,
+    CmprChunkHeader,
+    CmprChunkSize,
+    // NEW for ABSS / LSCO:
+    AbssChunkHeader,
+    AbssChunkSize,
+    LscoChunkHeader,
+    LscoChunkSize,
+    // NEW: compression type mismatch
+    CmprTypeMismatch,
 }
 
 #[derive(Debug, Clone)]
@@ -224,32 +370,37 @@ pub enum ChunkDataType {
     Sound(u8),
 }
 
+pub const CHUNK_HEADER_SIZE: u64 = 12;
+
 #[repr(C, packed)]
 #[derive(Debug, Copy, Clone)]
 pub struct ChunkHeader {
-    pub ck_id: u32,       
-    pub ck_data_size: u64 
+    pub ck_id: u32,
+    pub ck_data_size: u64,
 }
 
 #[derive(Debug, Clone)]
 pub struct Chunk {
     pub header: ChunkHeader,
-    pub data: Vec<ChunkDataType>,    
+    pub data: Vec<ChunkDataType>,
 }
 
 impl Chunk {
     pub fn new(header: ChunkHeader) -> Chunk {
-        Chunk { header, data: Vec::new() }
+        Chunk {
+            header,
+            data: Vec::new(),
+        }
     }
 }
 
 #[derive(Debug, Clone)]
 pub struct FormDsdChunk {
     pub chunk: Chunk,
-    pub form_type: u32,       
+    pub form_type: u32,
 }
 
-pub const DSD_LABEL:  u32 = u32::from_be_bytes(*b"DSD ");
+pub const DSD_LABEL: u32 = u32::from_be_bytes(*b"DSD ");
 
 impl FormDsdChunk {
     #[inline]
@@ -266,12 +417,12 @@ impl TryFrom<[u8; 16]> for FormDsdChunk {
         // Big‑endian helpers
         let be_u32 = |i: usize| {
             let mut a = [0u8; 4];
-            a.copy_from_slice(&buf[i..i+4]);
+            a.copy_from_slice(&buf[i..i + 4]);
             u32::from_be_bytes(a)
         };
         let be_u64 = |i: usize| {
             let mut a = [0u8; 8];
-            a.copy_from_slice(&buf[i..i+8]);
+            a.copy_from_slice(&buf[i..i + 8]);
             u64::from_be_bytes(a)
         };
 
@@ -286,7 +437,10 @@ impl TryFrom<[u8; 16]> for FormDsdChunk {
             return Err(Error::FormTypeMismatch);
         }
 
-        let header = ChunkHeader { ck_id, ck_data_size };
+        let header = ChunkHeader {
+            ck_id,
+            ck_data_size,
+        };
         Ok(FormDsdChunk {
             chunk: Chunk::new(header),
             form_type,
@@ -328,7 +482,10 @@ impl TryFrom<[u8; 16]> for FormatVersionChunk {
         }
 
         let version = be_u32(12);
-        let header = ChunkHeader { ck_id, ck_data_size };
+        let header = ChunkHeader {
+            ck_id,
+            ck_data_size,
+        };
         Ok(FormatVersionChunk {
             chunk: Chunk::new(header),
             format_version: version,
@@ -337,9 +494,12 @@ impl TryFrom<[u8; 16]> for FormatVersionChunk {
 }
 
 const PROP_LABEL: u32 = u32::from_be_bytes(*b"PROP");
-const SND_LABEL:  u32 = u32::from_be_bytes(*b"SND ");
-const FS_LABEL:   u32 = u32::from_be_bytes(*b"FS  ");
+const SND_LABEL: u32 = u32::from_be_bytes(*b"SND ");
+const FS_LABEL: u32 = u32::from_be_bytes(*b"FS  ");
 const CHNL_LABEL: u32 = u32::from_be_bytes(*b"CHNL");
+const COMP_LABEL: u32 = u32::from_be_bytes(*b"CMPR");
+const ABS_TIME_LABEL: u32 = u32::from_be_bytes(*b"ABSS");
+const LS_CONF_LABEL: u32 = u32::from_be_bytes(*b"LSCO");
 
 pub struct PropertyChunk {
     pub chunk: Chunk,
@@ -351,12 +511,12 @@ impl TryFrom<[u8; 16]> for PropertyChunk {
     fn try_from(buf: [u8; 16]) -> Result<Self, Self::Error> {
         let be_u32 = |i: usize| {
             let mut a = [0u8; 4];
-            a.copy_from_slice(&buf[i..i+4]);
+            a.copy_from_slice(&buf[i..i + 4]);
             u32::from_be_bytes(a)
         };
         let be_u64 = |i: usize| {
             let mut a = [0u8; 8];
-            a.copy_from_slice(&buf[i..i+8]);
+            a.copy_from_slice(&buf[i..i + 8]);
             u64::from_be_bytes(a)
         };
 
@@ -374,7 +534,10 @@ impl TryFrom<[u8; 16]> for PropertyChunk {
             return Err(Error::PropChunkType);
         }
 
-        let header = ChunkHeader { ck_id, ck_data_size };
+        let header = ChunkHeader {
+            ck_id,
+            ck_data_size,
+        };
         Ok(PropertyChunk {
             chunk: Chunk::new(header),
             property_type,
@@ -389,15 +552,15 @@ pub struct SampleRateChunk {
 
 impl TryFrom<[u8; 16]> for SampleRateChunk {
     type Error = Error;
-    fn try_from(buf: [u8;16]) -> Result<Self, Self::Error> {
+    fn try_from(buf: [u8; 16]) -> Result<Self, Self::Error> {
         let be_u32 = |i: usize| {
-            let mut a = [0u8;4];
-            a.copy_from_slice(&buf[i..i+4]);
+            let mut a = [0u8; 4];
+            a.copy_from_slice(&buf[i..i + 4]);
             u32::from_be_bytes(a)
         };
         let be_u64 = |i: usize| {
-            let mut a = [0u8;8];
-            a.copy_from_slice(&buf[i..i+8]);
+            let mut a = [0u8; 8];
+            a.copy_from_slice(&buf[i..i + 8]);
             u64::from_be_bytes(a)
         };
 
@@ -411,7 +574,10 @@ impl TryFrom<[u8; 16]> for SampleRateChunk {
         }
         let sample_rate = be_u32(12);
 
-        let header = ChunkHeader { ck_id, ck_data_size };
+        let header = ChunkHeader {
+            ck_id,
+            ck_data_size,
+        };
         Ok(SampleRateChunk {
             chunk: Chunk::new(header),
             sample_rate,
@@ -433,7 +599,7 @@ impl TryFrom<&[u8]> for ChannelsChunk {
         }
 
         let ck_id = {
-            let mut a = [0u8;4];
+            let mut a = [0u8; 4];
             a.copy_from_slice(&buf[0..4]);
             u32::from_be_bytes(a)
         };
@@ -442,7 +608,7 @@ impl TryFrom<&[u8]> for ChannelsChunk {
         }
 
         let ck_data_size = {
-            let mut a = [0u8;8];
+            let mut a = [0u8; 8];
             a.copy_from_slice(&buf[4..12]);
             u64::from_be_bytes(a)
         };
@@ -453,7 +619,7 @@ impl TryFrom<&[u8]> for ChannelsChunk {
         }
 
         let channel_count = {
-            let mut a = [0u8;2];
+            let mut a = [0u8; 2];
             a.copy_from_slice(&buf[12..14]);
             u16::from_be_bytes(a)
         };
@@ -467,13 +633,16 @@ impl TryFrom<&[u8]> for ChannelsChunk {
         let mut channel_ids = Vec::with_capacity(channel_count as usize);
         let mut idx = 14;
         for _ in 0..channel_count {
-            let mut a = [0u8;4];
-            a.copy_from_slice(&buf[idx..idx+4]);
+            let mut a = [0u8; 4];
+            a.copy_from_slice(&buf[idx..idx + 4]);
             channel_ids.push(u32::from_be_bytes(a));
             idx += 4;
         }
 
-        let header = ChunkHeader { ck_id, ck_data_size };
+        let header = ChunkHeader {
+            ck_id,
+            ck_data_size,
+        };
         Ok(ChannelsChunk {
             chunk: Chunk::new(header),
             channel_count,
@@ -482,6 +651,153 @@ impl TryFrom<&[u8]> for ChannelsChunk {
     }
 }
 
+#[derive(Debug)]
+pub struct CompressionTypeChunk {
+    pub chunk: Chunk,
+    pub compression_type: u32,
+    pub compression_name: String,
+}
+
+impl TryFrom<&[u8]> for CompressionTypeChunk {
+    type Error = Error;
+    fn try_from(buf: &[u8]) -> Result<Self, Self::Error> {
+        // Need at least 12 (header) + 4 (compression type)
+        if buf.len() < 16 {
+            return Err(Error::CmprChunkSize);
+        }
+
+        // Header
+        let ck_id = {
+            let mut a = [0u8; 4];
+            a.copy_from_slice(&buf[0..4]);
+            u32::from_be_bytes(a)
+        };
+        if ck_id != COMP_LABEL {
+            return Err(Error::CmprChunkHeader);
+        }
+
+        let ck_data_size = {
+            let mut a = [0u8; 8];
+            a.copy_from_slice(&buf[4..12]);
+            u64::from_be_bytes(a)
+        };
+
+        if buf.len() as u64 != 12 + ck_data_size || ck_data_size < 4 {
+            return Err(Error::CmprChunkSize);
+        }
+
+        let compression_type = {
+            let mut a = [0u8; 4];
+            a.copy_from_slice(&buf[12..16]);
+            u32::from_be_bytes(a)
+        };
+
+        // New check: must be 'DSD '
+        // DST not yet implemented
+        if compression_type != DSD_LABEL {
+            return Err(Error::CmprTypeMismatch);
+        }
+
+        // Remaining bytes (if any) are a UTF-8 / ASCII name, often null terminated
+        let name_bytes = if ck_data_size > 4 {
+            &buf[16..(12 + ck_data_size as usize)]
+        } else {
+            &[]
+        };
+        let name_terminated = match name_bytes.iter().position(|b| *b == 0) {
+            Some(pos) => &name_bytes[..pos],
+            None => name_bytes,
+        };
+        let compression_name = String::from_utf8_lossy(name_terminated).to_string();
+
+        let mut chunk = Chunk::new(ChunkHeader { ck_id, ck_data_size });
+        for ch in compression_name.chars() {
+            chunk.data.push(ChunkDataType::CompressionName(ch));
+        }
+
+        Ok(CompressionTypeChunk {
+            chunk,
+            compression_type,
+            compression_name,
+        })
+    }
+}
+
+/// Additional chunk types (ABSS and LSCO)
+
+pub struct AbsoluteStartTimeChunk {
+    pub chunk: Chunk,
+    pub start_time: u64,
+}
+
+impl TryFrom<&[u8]> for AbsoluteStartTimeChunk {
+    type Error = Error;
+    fn try_from(buf: &[u8]) -> Result<Self, Self::Error> {
+        if buf.len() < 12 {
+            return Err(Error::AbssChunkSize);
+        }
+        let ck_id = {
+            let mut a = [0u8; 4];
+            a.copy_from_slice(&buf[0..4]);
+            u32::from_be_bytes(a)
+        };
+        if ck_id != ABS_TIME_LABEL {
+            return Err(Error::AbssChunkHeader);
+        }
+        let ck_data_size = {
+            let mut a = [0u8; 8];
+            a.copy_from_slice(&buf[4..12]);
+            u64::from_be_bytes(a)
+        };
+        if buf.len() as u64 != 12 + ck_data_size || ck_data_size != 8 {
+            return Err(Error::AbssChunkSize);
+        }
+        let start_time = {
+            let mut a = [0u8; 8];
+            a.copy_from_slice(&buf[12..20]);
+            u64::from_be_bytes(a)
+        };
+        Ok(AbsoluteStartTimeChunk {
+            chunk: Chunk::new(ChunkHeader { ck_id, ck_data_size }),
+            start_time,
+        })
+    }
+}
+
+pub struct LoudspeakerConfigChunk {
+    pub chunk: Chunk,
+    pub data: Vec<u8>,
+}
+
+impl TryFrom<&[u8]> for LoudspeakerConfigChunk {
+    type Error = Error;
+    fn try_from(buf: &[u8]) -> Result<Self, Self::Error> {
+        if buf.len() < 12 {
+            return Err(Error::LscoChunkSize);
+        }
+        let ck_id = {
+            let mut a = [0u8; 4];
+            a.copy_from_slice(&buf[0..4]);
+            u32::from_be_bytes(a)
+        };
+        if ck_id != LS_CONF_LABEL {
+            return Err(Error::LscoChunkHeader);
+        }
+        let ck_data_size = {
+            let mut a = [0u8; 8];
+            a.copy_from_slice(&buf[4..12]);
+            u64::from_be_bytes(a)
+        };
+        if buf.len() as u64 != 12 + ck_data_size {
+            return Err(Error::LscoChunkSize);
+        }
+        let data = buf[12..].to_vec();
+        Ok(LoudspeakerConfigChunk {
+            chunk: Chunk::new(ChunkHeader { ck_id, ck_data_size }),
+            data,
+        })
+    }
+}
 /// The first chunk of a DSF file is the
 /// [`DsdChunk`](struct.DsdChunk.html), which must begin with the
 /// following four bytes.
@@ -538,7 +854,6 @@ impl TryFrom<[u8; 28]> for DsdChunk {
         Ok(DsdChunk::new(file_size, metadata_offset))
     }
 }
-
 
 /// The block size is always 4096 bytes.
 const BLOCK_SIZE: usize = 4096;
@@ -706,7 +1021,7 @@ impl<'a> Frames<'a> {
         }
 
         // Hardcoded for now, we will read this from the fmt chunk later.
-        let (frame_index, block_index) = (0,0);
+        let (frame_index, block_index) = (0, 0);
 
         if self.frame_index != frame_index {
             self.load_frame(frame_index)?;
@@ -816,12 +1131,10 @@ impl<'a> InterleavedU32SamplesIter<'a> {
     /// `sample_index` is out of range.
     ///
     /// This method is useful for seeking to a specific sample.
+    /// This method is useful for seeking to a specific sample.
     /// `sample_index` is normalised so that it corresponds to the
     /// first 1-bit sample in the next returned `u32`.
-    /// `sample_index` is also checked to be in range.
-    ///
     /// # Errors
-    /// If `sample_index` is out of range, an error is returned.
     pub fn set_sample_index(&mut self, sample_index: u64) -> Result<u64, Error> {
         if sample_index >= self.sample_count {
             return Err(Error::SampleIndexOutOfRange);
@@ -890,28 +1203,39 @@ impl fmt::Display for Error {
             Error::FormTypeMismatch => f.write_str("FORM chunk form type must be 'DSD '."),
             Error::FverChunkHeader => f.write_str("Format Version chunk must start with 'FVER'."),
             Error::FverChunkSize => f.write_str("FVER chunk data size must be 4."),
-            Error::FverUnsupportedVersion => f.write_str("Unsupported format version in FVER chunk."),
+            Error::FverUnsupportedVersion => {
+                f.write_str("Unsupported format version in FVER chunk.")
+            }
             Error::PropChunkHeader => f.write_str("Property chunk must start with 'PROP'."),
             Error::PropChunkType => f.write_str("Property chunk type must be 'SND '."),
             Error::FsChunkHeader => f.write_str("Sample rate chunk must start with 'FS  '."),
-            Error::FsChunkSize => f.write_str("FS chunk data size must be 4."),
+            Error::FsChunkSize => f.write_str("FS chunk size must be 4."),
             Error::ChnlChunkHeader => f.write_str("Channels chunk must start with 'CHNL'."),
             Error::ChnlChunkSize => f.write_str("CHNL chunk size does not match channel data."),
+            Error::CmprChunkHeader => f.write_str("Compression type chunk must start with 'CMPR'."),
+            Error::CmprChunkSize => f.write_str("CMPR chunk size invalid or inconsistent."),
+            Error::AbssChunkHeader => {
+                f.write_str("Absolute start time chunk must start with 'ABSS'.")
+            }
+            Error::AbssChunkSize => f.write_str("ABSS chunk size invalid."),
+            Error::LscoChunkHeader => {
+                f.write_str("Loudspeaker config chunk must start with 'LSCO'.")
+            }
+            Error::LscoChunkSize => f.write_str("LSCO chunk size invalid or inconsistent."),
+            Error::CmprTypeMismatch => f.write_str("Compression type must be 'DSD '."),
         }
     }
 }
-impl std::error::Error for Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Error::Id3Error(id3_error) => Some(id3_error),
-            Error::IoError(io_error) => Some(io_error),
-            _ => None,
-        }
-    }
-}
+
 impl From<io::Error> for Error {
     fn from(error: io::Error) -> Self {
         Error::IoError(error)
+    }
+}
+
+impl From<id3::Error> for Error {
+    fn from(error: id3::Error) -> Self {
+        Error::Id3Error(error)
     }
 }
 
@@ -925,8 +1249,7 @@ mod tests {
         let path = Path::new(sweep_filename);
 
         if !path.is_file() {
-            let sweep_url =
-                "http://samplerateconverter.com/free-files/samples/dsf/sweep-176400hz-0-22050hz-20s-D64-2.8mhz.zip";
+            let sweep_url = "http://samplerateconverter.com/free-files/samples/dsf/sweep-176400hz-0-22050hz-20s-D64-2.8mhz.zip";
 
             Command::new("wget")
                 .arg(sweep_url)
@@ -942,5 +1265,4 @@ mod tests {
 
         DffFile::open(path)
     }
-
 }
