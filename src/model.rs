@@ -17,6 +17,7 @@ pub const CHNL_LABEL: ID = u32::from_be_bytes(*b"CHNL");
 pub const COMP_LABEL: ID = u32::from_be_bytes(*b"CMPR");
 pub const ABS_TIME_LABEL: ID = u32::from_be_bytes(*b"ABSS");
 pub const LS_CONF_LABEL: ID = u32::from_be_bytes(*b"LSCO");
+pub const ID3_LABEL: ID = u32::from_be_bytes(*b"ID3 ");
 pub const BLOCK_SIZE: usize = 1;
 
 #[derive(Debug)]
@@ -73,6 +74,7 @@ pub enum LocalChunk {
     AbsoluteStartTime(AbsoluteStartTimeChunk),
     LoudspeakerConfig(LoudspeakerConfigChunk),
     Dsd(DsdChunk),
+    Id3(Id3Chunk), // NEW
 }
 
 /// DFF File Model
@@ -148,4 +150,10 @@ pub struct LoudspeakerConfigChunk {
 #[derive(Debug, Clone)]
 pub struct DsdChunk {
     pub chunk: Chunk,
+}
+
+#[derive(Debug, Clone)]
+pub struct Id3Chunk {
+    pub chunk: Chunk,
+    pub tag: Option<id3::Tag>,
 }

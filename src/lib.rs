@@ -43,6 +43,7 @@ use std::io;
 use std::io::Read;
 use std::io::SeekFrom;
 use std::io::prelude::*;
+use std::mem;
 use std::path::Path;
 use std::u64;
 
@@ -50,6 +51,7 @@ pub struct DffFile {
     file: File,
     frm_chunk: FormDsdChunk,
     dsd_data_offset: u64,
+    dsd_audio_size: u64,
 }
 impl DffFile {
     /// Attempt to open and parse the metadata of DFF file in
@@ -185,19 +187,79 @@ impl DffFile {
             }
         }
 
-        let mut dsd_header_buffer: [u8; 12] = [0; 12];
+        let mut dsd_header_buffer: [u8; CHUNK_HEADER_SIZE as usize] =
+            [0; CHUNK_HEADER_SIZE as usize];
         file.read_exact(&mut dsd_header_buffer)?;
         let dsd_data_offset = file.stream_position()?;
         let dsd_chunk = DsdChunk::try_from(dsd_header_buffer)?;
+        let dsd_audio_size = dsd_chunk.chunk.header.ck_data_size;
         frm_chunk
             .chunk
             .local_chunks
             .insert(DSD_LABEL, LocalChunk::Dsd(dsd_chunk));
 
+        // Seek past raw DSD audio data
+        file.seek(SeekFrom::Current(dsd_audio_size as i64))?;
+
+        // Scan any remaining chunks inside the FORM chunk boundary for ID3
+        let form_end = frm_chunk.chunk.header.ck_data_size + CHUNK_HEADER_SIZE; // total bytes from start (FORM header at offset 0)
+        loop {
+            let pos = file.stream_position()?;
+            // Ensure we have room for another chunk header fully inside FORM
+            if pos + CHUNK_HEADER_SIZE > form_end {
+                break;
+            }
+
+            // Read potential header
+            let mut hdr = [0u8; CHUNK_HEADER_SIZE as usize];
+            if let Err(e) = file.read_exact(&mut hdr) {
+                if e.kind() == io::ErrorKind::UnexpectedEof {
+                    break;
+                }
+                return Err(e.into());
+            }
+
+            let ck_id = u32_from_byte_buffer(&hdr, 0);
+            let ck_data_size = u64_from_byte_buffer(&hdr, size_of::<ID>());
+
+            // If payload would exceed FORM boundary, stop.
+            if pos + CHUNK_HEADER_SIZE + ck_data_size > form_end {
+                break;
+            }
+
+            if ck_id != ID3_LABEL {
+                // Skip unknown/non-ID3 chunk payload
+                file.seek(SeekFrom::Current(ck_data_size as i64))?;
+                continue;
+            }
+
+            // Read ID3 data
+            let mut data = vec![0u8; ck_data_size as usize];
+            file.read_exact(&mut data)?;
+
+            let tag = id3::Tag::read_from(&mut &data[..]).ok();
+            let id3_chunk = Id3Chunk {
+                chunk: Chunk::new(ChunkHeader {
+                    ck_id,
+                    ck_data_size,
+                }),
+                tag,
+            };
+
+            frm_chunk
+                .chunk
+                .local_chunks
+                .insert(ID3_LABEL, LocalChunk::Id3(id3_chunk));
+
+            // Only one expected; break after storing
+            break;
+        }
+
         Ok(DffFile {
             file,
             frm_chunk,
             dsd_data_offset,
+            dsd_audio_size,
         })
     }
 
@@ -238,18 +300,64 @@ impl DffFile {
     }
 
     pub fn get_audio_length(&self) -> u64 {
-        if let Some(LocalChunk::Dsd(dsd_chunk)) = self.frm_chunk.chunk.local_chunks.get(&DSD_LABEL) {
-            dsd_chunk.chunk.header.ck_data_size
-        } else {
-            0
+        self.dsd_audio_size
+    }
+
+    pub fn get_num_channels(&self) -> Result<usize, Error> {
+        let prop_chunk = match self.frm_chunk.chunk.local_chunks.get(&PROP_LABEL) {
+            Some(LocalChunk::Property(prop)) => prop,
+            _ => return Err(Error::PropChunkHeader),
+        };
+        match prop_chunk.chunk.local_chunks.get(&CHNL_LABEL) {
+            Some(LocalChunk::Channels(chnl)) => Ok(chnl.num_channels as usize),
+            _ => return Err(Error::ChnlChunkHeader),
         }
+    }
+
+    pub fn get_sample_rate(&self) -> Result<u32, Error> {
+        let prop_chunk = match self.frm_chunk.chunk.local_chunks.get(&PROP_LABEL) {
+            Some(LocalChunk::Property(prop)) => prop,
+            _ => return Err(Error::PropChunkHeader),
+        };
+        match prop_chunk.chunk.local_chunks.get(&FS_LABEL) {
+            Some(LocalChunk::SampleRate(fs)) => Ok(fs.sample_rate),
+            _ => return Err(Error::FsChunkHeader),
+        }
+    }
+
+    pub fn get_form_chunk_size(&self) -> u64 {
+        self.frm_chunk.chunk.header.ck_data_size + CHUNK_HEADER_SIZE
+    }
+
+    pub fn get_file_size(&self) -> Result<u64, io::Error> {
+        let metadata = self.file.metadata()?;
+        Ok(metadata.len())
     }
 
     // TODO: fn channel_samples_iter(channel_index: u32) -> ChannelSamplesIter
 }
 impl fmt::Display for DffFile {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Audio Length:\n{} bytes", self.get_audio_length())
+        write!(
+            f,
+            "File size: {} bytes\nForm Chunk Size: {} bytes\nDSD Audio Offset: {} bytes\nAudio Length: {} bytes\nChannels: {}\nSample Rate: {} Hz\nID3 Tag:\n{}",
+            self.get_file_size().unwrap_or(0),
+            self.get_form_chunk_size(),
+            self.get_dsd_data_offset(),
+            self.get_audio_length(),
+            self.get_num_channels().unwrap_or(0),
+            self.get_sample_rate().unwrap_or(0),
+            match self.frm_chunk.chunk.local_chunks.get(&ID3_LABEL) {
+                Some(LocalChunk::Id3(id3_chunk)) => {
+                    if let Some(tag) = &id3_chunk.tag {
+                        id3_display::id3_tag_to_string(tag)
+                    } else {
+                        String::from("No ID3 tag present.")
+                    }
+                }
+                _ => String::from("No ID3 tag present."),
+            }
+        )
     }
 }
 
@@ -713,25 +821,10 @@ pub struct Frames<'a> {
 impl<'a> Frames<'a> {
     /// Make a new `Frames` struct from the `dff_file`.
     fn new(dff_file: &mut DffFile) -> Result<Frames, Error> {
-        // Hardcoded for now, we will read this from the fmt chunk later.
-        let channels = {
-            let prop_chunk = match dff_file.frm_chunk.chunk.local_chunks.get(&PROP_LABEL) {
-                Some(LocalChunk::Property(prop)) => prop,
-                _ => return Err(Error::PropChunkHeader),
-            };
-            match prop_chunk.chunk.local_chunks.get(&CHNL_LABEL) {
-                Some(LocalChunk::Channels(chnl)) => chnl.num_channels as usize,
-                _ => return Err(Error::ChnlChunkHeader),
-            }
-        };
-
+        let channels = dff_file.get_num_channels()?;
         let frame_size = BLOCK_SIZE * channels;
-
-        // Compute real frame count from DSD chunk size and channel/block structure.
         let frame_count = dff_file.get_audio_length() / frame_size as u64;
-
-        let mut frame = vec![0u8; frame_size];
-
+        let frame = vec![0u8; frame_size];
         let reverse_bits = false;
 
         let mut frames = Frames {
@@ -748,7 +841,7 @@ impl<'a> Frames<'a> {
         Ok(frames)
     }
 
-    /// Return the offset (position in the DSF file in bytes) of the
+    /// Return the offset (position in the DFF file in bytes) of the
     /// specified frame.
     ///
     /// Note that `frame_index` is zero-based so the first frame has
