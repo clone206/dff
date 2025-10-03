@@ -33,7 +33,6 @@
 mod id3_display;
 mod model;
 
-use crate::id3_display::id3_tag_to_string;
 use crate::model::*;
 use id3::Tag;
 use std::collections::HashMap;
@@ -51,7 +50,6 @@ pub struct DffFile {
     file: File,
     frm_chunk: FormDsdChunk,
     dsd_data_offset: u64,
-    id3_tag: Option<Tag>,
 }
 impl DffFile {
     /// Attempt to open and parse the metadata of DFF file in
@@ -77,7 +75,7 @@ impl DffFile {
         frm_chunk
             .chunk
             .local_chunks
-            .insert(FVER_LABEL, DffChunk::FormatVersion(fver_chunk));
+            .insert(FVER_LABEL, LocalChunk::FormatVersion(fver_chunk));
 
         let mut prop_chunk_buffer: [u8; 16] = [0; 16];
         file.read_exact(&mut prop_chunk_buffer)?;
@@ -86,13 +84,13 @@ impl DffFile {
         frm_chunk
             .chunk
             .local_chunks
-            .insert(PROP_LABEL, DffChunk::Property(prop_chunk));
+            .insert(PROP_LABEL, LocalChunk::Property(prop_chunk));
 
         let prop_data_offset = file.stream_position()? - 4;
         let mut chunk_header_buffer: [u8; CHUNK_HEADER_SIZE as usize] =
             [0; CHUNK_HEADER_SIZE as usize];
 
-        if let Some(DffChunk::Property(prop_chunk_inner)) =
+        if let Some(LocalChunk::Property(prop_chunk_inner)) =
             frm_chunk.chunk.local_chunks.get_mut(&PROP_LABEL)
         {
             while file.stream_position().unwrap() < prop_data_offset + prop_data_size as u64
@@ -115,7 +113,7 @@ impl DffFile {
                         prop_chunk_inner
                             .chunk
                             .local_chunks
-                            .insert(FS_LABEL, DffChunk::SampleRate(fs_chunk));
+                            .insert(FS_LABEL, LocalChunk::SampleRate(fs_chunk));
                     }
                     CHNL_LABEL => {
                         // Read CHNL chunk data (channel count + IDs).
@@ -128,7 +126,7 @@ impl DffFile {
                             prop_chunk_inner
                                 .chunk
                                 .local_chunks
-                                .insert(CHNL_LABEL, DffChunk::Channels(chnl_chunk));
+                                .insert(CHNL_LABEL, LocalChunk::Channels(chnl_chunk));
                         }
                     }
                     COMP_LABEL => {
@@ -143,7 +141,7 @@ impl DffFile {
                             prop_chunk_inner
                                 .chunk
                                 .local_chunks
-                                .insert(COMP_LABEL, DffChunk::CompressionType(cmpr_chunk));
+                                .insert(COMP_LABEL, LocalChunk::CompressionType(cmpr_chunk));
                         }
                     }
                     ABS_TIME_LABEL => {
@@ -159,7 +157,7 @@ impl DffFile {
                             prop_chunk_inner
                                 .chunk
                                 .local_chunks
-                                .insert(ABS_TIME_LABEL, DffChunk::AbsoluteStartTime(abs_chunk));
+                                .insert(ABS_TIME_LABEL, LocalChunk::AbsoluteStartTime(abs_chunk));
                         }
                     }
                     LS_CONF_LABEL => {
@@ -176,7 +174,7 @@ impl DffFile {
                             prop_chunk_inner
                                 .chunk
                                 .local_chunks
-                                .insert(LS_CONF_LABEL, DffChunk::LoudspeakerConfig(lsco_chunk));
+                                .insert(LS_CONF_LABEL, LocalChunk::LoudspeakerConfig(lsco_chunk));
                         }
                     }
                     _ => {
@@ -194,13 +192,12 @@ impl DffFile {
         frm_chunk
             .chunk
             .local_chunks
-            .insert(DSD_LABEL, DffChunk::Dsd(dsd_chunk));
+            .insert(DSD_LABEL, LocalChunk::Dsd(dsd_chunk));
 
         Ok(DffFile {
             file,
             frm_chunk,
             dsd_data_offset,
-            id3_tag: todo!(),
         })
     }
 
@@ -210,11 +207,11 @@ impl DffFile {
         &self.file
     }
 
-    /// Return a reference to the optional `ID3v2` [Tag](id3::Tag).
-    #[must_use]
-    pub fn id3_tag(&self) -> &Option<Tag> {
-        &self.id3_tag
-    }
+    // /// Return a reference to the optional `ID3v2` [Tag](id3::Tag).
+    // #[must_use]
+    // pub fn id3_tag(&self) -> &Option<Tag> {
+    //     &self.id3_tag
+    // }
 
     /// Return a representation of the sample data as [`Frames`](struct.Frames.html).
     ///
@@ -241,12 +238,7 @@ impl DffFile {
     }
 
     pub fn get_audio_length(&self) -> u64 {
-        if let Some(DffChunk::Dsd(dsd_chunk)) = self
-            .frm_chunk
-            .chunk
-            .local_chunks
-            .get(&DSD_LABEL)
-        {
+        if let Some(LocalChunk::Dsd(dsd_chunk)) = self.frm_chunk.chunk.local_chunks.get(&DSD_LABEL) {
             dsd_chunk.chunk.header.ck_data_size
         } else {
             0
@@ -267,7 +259,7 @@ fn u64_from_byte_buffer(buffer: &[u8], index: usize) -> u64 {
     let mut byte_array: [u8; 8] = [0; 8];
     byte_array.copy_from_slice(&buffer[index..index + 8]);
 
-    u64::from_le_bytes(byte_array)
+    u64::from_be_bytes(byte_array)
 }
 
 /// Return a `u32` which starts from `index` in the specified byte
@@ -276,7 +268,7 @@ fn u32_from_byte_buffer(buffer: &[u8], index: usize) -> u32 {
     let mut byte_array: [u8; 4] = [0; 4];
     byte_array.copy_from_slice(&buffer[index..index + 4]);
 
-    u32::from_le_bytes(byte_array)
+    u32::from_be_bytes(byte_array)
 }
 
 impl Chunk {
@@ -478,7 +470,7 @@ impl TryFrom<&[u8]> for ChannelsChunk {
             u16::from_be_bytes(a)
         };
 
-        if num_channels != 1 && num_channels != 2{
+        if num_channels != 1 && num_channels != 2 {
             return Err(Error::ChnlNumber);
         }
 
@@ -562,7 +554,7 @@ impl TryFrom<&[u8]> for CompressionTypeChunk {
         };
 
         Ok(CompressionTypeChunk {
-            chunk : Chunk::new(ChunkHeader {
+            chunk: Chunk::new(ChunkHeader {
                 ck_id,
                 ck_data_size,
             }),
@@ -724,11 +716,11 @@ impl<'a> Frames<'a> {
         // Hardcoded for now, we will read this from the fmt chunk later.
         let channels = {
             let prop_chunk = match dff_file.frm_chunk.chunk.local_chunks.get(&PROP_LABEL) {
-                Some(DffChunk::Property(prop)) => prop,
+                Some(LocalChunk::Property(prop)) => prop,
                 _ => return Err(Error::PropChunkHeader),
             };
             match prop_chunk.chunk.local_chunks.get(&CHNL_LABEL) {
-                Some(DffChunk::Channels(chnl)) => chnl.num_channels as usize,
+                Some(LocalChunk::Channels(chnl)) => chnl.num_channels as usize,
                 _ => return Err(Error::ChnlChunkHeader),
             }
         };
@@ -867,7 +859,12 @@ impl<'a> Frames<'a> {
         let b3 = self.frame[base + 3];
 
         let samples_as_u8_array: [u8; 4] = if self.reverse_bits {
-            [b0.reverse_bits(), b1.reverse_bits(), b2.reverse_bits(), b3.reverse_bits()]
+            [
+                b0.reverse_bits(),
+                b1.reverse_bits(),
+                b2.reverse_bits(),
+                b3.reverse_bits(),
+            ]
         } else {
             [b0, b1, b2, b3]
         };
@@ -895,7 +892,12 @@ impl<'a> Frames<'a> {
         let b3 = self.frame[base + 3];
 
         let samples_as_u8_array: [u8; 4] = if self.reverse_bits {
-            [b0.reverse_bits(), b1.reverse_bits(), b2.reverse_bits(), b3.reverse_bits()]
+            [
+                b0.reverse_bits(),
+                b1.reverse_bits(),
+                b2.reverse_bits(),
+                b3.reverse_bits(),
+            ]
         } else {
             [b0, b1, b2, b3]
         };
@@ -1066,27 +1068,19 @@ impl From<id3::Error> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::process::Command;
 
-    fn get_sweep_dsf_file() -> Result<DffFile, Error> {
-        let sweep_filename = "sweep-176400hz-0-22050hz-20s-D64-2.8mhz.dsf";
-        let path = Path::new(sweep_filename);
+    #[test]
+    fn display_file() {
+        let filename = "test.dff";
+        let path = Path::new(filename);
 
-        if !path.is_file() {
-            let sweep_url = "http://samplerateconverter.com/free-files/samples/dsf/sweep-176400hz-0-22050hz-20s-D64-2.8mhz.zip";
-
-            Command::new("wget")
-                .arg(sweep_url)
-                .status()
-                .unwrap_or_else(|_| panic!("Failed to download {}", sweep_url));
-
-            let sweep_zip_filename = "sweep-176400hz-0-22050hz-20s-D64-2.8mhz.zip";
-            Command::new("unzip")
-                .arg(sweep_zip_filename)
-                .status()
-                .unwrap_or_else(|_| panic!("Failed to unzip {}", sweep_zip_filename));
+        match DffFile::open(path) {
+            Ok(dff_file) => {
+                println!("DFF file metadata:\n\n{}", dff_file);
+            }
+            Err(error) => {
+                println!("Error: {}", error);
+            }
         }
-
-        DffFile::open(path)
     }
 }

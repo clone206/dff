@@ -64,8 +64,7 @@ pub enum Error {
 }
 
 #[derive(Debug, Clone)]
-pub enum DffChunk {
-    FormDsd(FormDsdChunk),
+pub enum LocalChunk {
     FormatVersion(FormatVersionChunk),
     Property(PropertyChunk),
     SampleRate(SampleRateChunk),
@@ -88,7 +87,7 @@ pub struct ChunkHeader {
 #[derive(Debug, Clone)]
 pub struct Chunk {
     pub header: ChunkHeader,
-    pub local_chunks: HashMap<ID, DffChunk>,
+    pub local_chunks: HashMap<ID, LocalChunk>,
 }
 
 #[derive(Debug, Clone)]
