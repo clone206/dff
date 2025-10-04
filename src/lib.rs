@@ -334,6 +334,13 @@ impl DffFile {
         Ok(metadata.len())
     }
 
+    pub fn id3_tag(&self) -> Option<&Tag> {
+        match self.frm_chunk.chunk.local_chunks.get(&ID3_LABEL) {
+            Some(LocalChunk::Id3(id3_chunk)) => id3_chunk.tag.as_ref(),
+            _ => None,
+        }
+    }
+
     // TODO: fn channel_samples_iter(channel_index: u32) -> ChannelSamplesIter
 }
 impl fmt::Display for DffFile {
@@ -347,15 +354,10 @@ impl fmt::Display for DffFile {
             self.get_audio_length(),
             self.get_num_channels().unwrap_or(0),
             self.get_sample_rate().unwrap_or(0),
-            match self.frm_chunk.chunk.local_chunks.get(&ID3_LABEL) {
-                Some(LocalChunk::Id3(id3_chunk)) => {
-                    if let Some(tag) = &id3_chunk.tag {
-                        id3_display::id3_tag_to_string(tag)
-                    } else {
-                        String::from("No ID3 tag present.")
-                    }
-                }
-                _ => String::from("No ID3 tag present."),
+            if let Some(tag) = &self.id3_tag() {
+                id3_display::id3_tag_to_string(tag)
+            } else {
+                String::from("No ID3 tag present.")
             }
         )
     }
@@ -1142,6 +1144,16 @@ impl fmt::Display for Error {
             }
             Error::LscoChunkSize => f.write_str("LSCO chunk size invalid or inconsistent."),
             Error::CmprTypeMismatch => f.write_str("Compression type must be 'DSD '."),
+        }
+    }
+}
+
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Error::Id3Error(id3_error) => Some(id3_error),
+            Error::IoError(io_error) => Some(io_error),
+            _ => None,
         }
     }
 }
