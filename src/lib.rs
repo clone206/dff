@@ -319,7 +319,7 @@ impl DffFile {
 
     /// Return an
     /// [`InterleavedU32SamplesIter`](struct.InterleavedU32SamplesIter.html)
-    /// for the sample data contained in this DSF file.
+    /// for the sample data contained in this DFF file.
     ///
     /// # Errors
     ///
@@ -1071,7 +1071,7 @@ impl<'a> InterleavedU32SamplesIter<'a> {
         self.sample_index
     }
 
-    /// Return the sample count for the associated DSF file.
+    /// Return the sample count for the associated DFF file.
     #[must_use]
     pub fn sample_count(&self) -> u64 {
         self.sample_count
