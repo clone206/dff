@@ -334,10 +334,10 @@ impl DffFile {
         Ok(metadata.len())
     }
 
-    pub fn id3_tag(&self) -> Option<&Tag> {
+    pub fn id3_tag(&self) -> &Option<Tag> {
         match self.frm_chunk.chunk.local_chunks.get(&ID3_LABEL) {
-            Some(LocalChunk::Id3(id3_chunk)) => id3_chunk.tag.as_ref(),
-            _ => None,
+            Some(LocalChunk::Id3(id3_chunk)) => &id3_chunk.tag,
+            _ => &None,
         }
     }
 
@@ -1017,9 +1017,9 @@ pub struct InterleavedU32SamplesIter<'a> {
 impl<'a> InterleavedU32SamplesIter<'a> {
     /// Make a new `InterleavedU32SamplesIter` for the specified `dsf_file`.
     fn new(dff_file: &mut DffFile) -> Result<InterleavedU32SamplesIter, Error> {
-        // Hardcoded for now, we will read this from the fmt chunk later.
-        let channels = 2 as usize;
-        let sample_count = (BLOCK_SIZE * 8) as u64;
+        let channels = dff_file.get_num_channels()?;
+        // Total bits = audio_length * 8 / channels / block_size normalization left TODO.
+        let sample_count = dff_file.get_audio_length() * 8 / channels as u64;
         let frames = Frames::new(dff_file)?;
 
         Ok(InterleavedU32SamplesIter {

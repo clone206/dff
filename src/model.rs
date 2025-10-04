@@ -1,6 +1,8 @@
 use std::io;
 use std::collections::HashMap;
 
+use id3::Tag;
+
 pub type Uchar = u8;
 pub type Ushort = u16;
 pub type Ulong = u32;
@@ -155,5 +157,5 @@ pub struct DsdChunk {
 #[derive(Debug, Clone)]
 pub struct Id3Chunk {
     pub chunk: Chunk,
-    pub tag: Option<id3::Tag>,
+    pub tag: Option<Tag>,
 }
