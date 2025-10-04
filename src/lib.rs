@@ -8,8 +8,8 @@
 //!
 //! # Examples
 //!
-//! This example displays the metadata for the DSF file
-//! `my/music.dsf`.
+//! This example displays the metadata for the DFF file
+//! `my/music.dff`.
 //!
 //!```no_run
 //! use dsf::DffFile;
@@ -43,7 +43,6 @@ use std::io;
 use std::io::Read;
 use std::io::SeekFrom;
 use std::io::prelude::*;
-use std::mem;
 use std::path::Path;
 use std::u64;
 
@@ -79,14 +78,48 @@ impl DffFile {
             .local_chunks
             .insert(FVER_LABEL, LocalChunk::FormatVersion(fver_chunk));
 
-        let mut prop_chunk_buffer: [u8; 16] = [0; 16];
-        file.read_exact(&mut prop_chunk_buffer)?;
-        let prop_chunk = PropertyChunk::try_from(prop_chunk_buffer)?;
-        let prop_data_size = prop_chunk.chunk.header.ck_data_size;
-        frm_chunk
-            .chunk
-            .local_chunks
-            .insert(PROP_LABEL, LocalChunk::Property(prop_chunk));
+        // Scan forward for the Property (PROP) chunk; do not assume it is contiguous after FVER.
+        // If we encounter the DSD chunk before PROP, treat file as malformed.
+        loop {
+            // Read only the 12‑byte generic chunk header (ID + data_size).
+            let mut hdr12 = [0u8; 12];
+            if let Err(_) = file.read_exact(&mut hdr12) {
+                return Err(Error::PropChunkHeader);
+            }
+            let ck_id = u32_from_byte_buffer(&hdr12, 0);
+            let ck_data_size = u64_from_byte_buffer(&hdr12, 4);
+
+            if ck_id == PROP_LABEL {
+                // For PROP, the first 4 bytes of its data are the property_type (e.g. 'SND ').
+                let mut prop_type = [0u8; 4];
+                file.read_exact(&mut prop_type)?;
+
+                // Reconstruct the 16‑byte buffer expected by PropertyChunk::try_from:
+                // [12‑byte header][4‑byte property_type]
+                let mut full16 = [0u8; 16];
+                full16[0..12].copy_from_slice(&hdr12);
+                full16[12..16].copy_from_slice(&prop_type);
+                let pc = PropertyChunk::try_from(full16)?;
+                frm_chunk
+                    .chunk
+                    .local_chunks
+                    .insert(PROP_LABEL, LocalChunk::Property(pc));
+                break;
+            } else if ck_id == DSD_LABEL {
+                // Encountered audio chunk before property chunk: malformed.
+                return Err(Error::PropChunkHeader);
+            } else {
+                // Skip this chunk's payload (and its pad byte if size is odd) and continue.
+                file.seek(SeekFrom::Current(ck_data_size as i64))?;
+                continue;
+            }
+        }
+
+        let prop_data_size = match frm_chunk.chunk.local_chunks.get(&PROP_LABEL) {
+            Some(LocalChunk::Property(prop)) => prop.chunk.header.ck_data_size,
+            _ => return Err(Error::PropChunkHeader),
+        };
+        // Replace the stored PROP entry with the one we just parsed (already inserted).
 
         let prop_data_offset = file.stream_position()? - 4;
         let mut chunk_header_buffer: [u8; CHUNK_HEADER_SIZE as usize] =
