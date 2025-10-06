@@ -64,84 +64,58 @@ impl DffFile {
     ///
     pub fn open(path: &Path) -> Result<DffFile, Error> {
         let mut file = File::open(path)?;
+        let mut hdr_buf = [0u8; CHUNK_HEADER_SIZE as usize];
+        let mut chunk_buf16 = [0u8; 16];
 
-        let mut frm_chunk_buffer: [u8; 16] = [0; 16];
-        file.read_exact(&mut frm_chunk_buffer)?;
-        let mut frm_chunk = FormDsdChunk::try_from(frm_chunk_buffer)?;
+        // FORM (FRM8)
+        file.read_exact(&mut chunk_buf16)?;
+        let mut frm_chunk = FormDsdChunk::try_from(chunk_buf16)?;
 
-        let mut fver_chunk_buffer: [u8; 16] = [0; 16];
-        file.read_exact(&mut fver_chunk_buffer)?;
-        let fver_chunk = FormatVersionChunk::try_from(fver_chunk_buffer)?;
-        // Store the parsed FormatVersionChunk's inner Chunk in the FORM chunk data.
+        // FVER
+        file.read_exact(&mut chunk_buf16)?;
+        let fver_chunk = FormatVersionChunk::try_from(chunk_buf16)?;
         frm_chunk
             .chunk
             .local_chunks
             .insert(FVER_LABEL, LocalChunk::FormatVersion(fver_chunk));
 
-        // Scan forward for the Property (PROP) chunk; do not assume it is contiguous after FVER.
-        // If we encounter the DSD chunk before PROP, treat file as malformed.
-        loop {
-            // Read only the 12‑byte generic chunk header (ID + data_size).
-            let mut hdr12 = [0u8; 12];
-            if let Err(_) = file.read_exact(&mut hdr12) {
-                return Err(Error::PropChunkHeader);
-            }
-            let ck_id = u32_from_byte_buffer(&hdr12, 0);
-            let ck_data_size = u64_from_byte_buffer(&hdr12, 4);
+        // Locate PROP (abort if DSD encountered first)
+        hdr_buf = scan_until(&mut file, PROP_LABEL, DSD_LABEL)?;
+        chunk_buf16[0..12].copy_from_slice(&hdr_buf);
 
-            if ck_id == PROP_LABEL {
-                // For PROP, the first 4 bytes of its data are the property_type (e.g. 'SND ').
-                let mut prop_type = [0u8; 4];
-                file.read_exact(&mut prop_type)?;
+        // Read property_type (4 bytes) then build 16-byte buffer
+        let mut prop_type = [0u8; 4];
+        file.read_exact(&mut prop_type)?;
+        chunk_buf16[12..16].copy_from_slice(&prop_type);
 
-                // Reconstruct the 16‑byte buffer expected by PropertyChunk::try_from:
-                // [12‑byte header][4‑byte property_type]
-                let mut full16 = [0u8; 16];
-                full16[0..12].copy_from_slice(&hdr12);
-                full16[12..16].copy_from_slice(&prop_type);
-                let pc = PropertyChunk::try_from(full16)?;
-                frm_chunk
-                    .chunk
-                    .local_chunks
-                    .insert(PROP_LABEL, LocalChunk::Property(pc));
-                break;
-            } else if ck_id == DSD_LABEL {
-                // Encountered audio chunk before property chunk: malformed.
-                return Err(Error::PropChunkHeader);
-            } else {
-                // Skip this chunk's payload (and its pad byte if size is odd) and continue.
-                file.seek(SeekFrom::Current(ck_data_size as i64))?;
-                continue;
-            }
-        }
+        let pc = PropertyChunk::try_from(chunk_buf16)?;
+        frm_chunk
+            .chunk
+            .local_chunks
+            .insert(PROP_LABEL, LocalChunk::Property(pc));
 
         let prop_data_size = match frm_chunk.chunk.local_chunks.get(&PROP_LABEL) {
             Some(LocalChunk::Property(prop)) => prop.chunk.header.ck_data_size,
             _ => return Err(Error::PropChunkHeader),
         };
-        // Replace the stored PROP entry with the one we just parsed (already inserted).
-
         let prop_data_offset = file.stream_position()? - 4;
-        let mut chunk_header_buffer: [u8; CHUNK_HEADER_SIZE as usize] =
-            [0; CHUNK_HEADER_SIZE as usize];
 
         if let Some(LocalChunk::Property(prop_chunk_inner)) =
             frm_chunk.chunk.local_chunks.get_mut(&PROP_LABEL)
         {
-            while file.stream_position().unwrap() < prop_data_offset + prop_data_size as u64
-                && file.read_exact(&mut chunk_header_buffer).is_ok()
+            while file.stream_position()? < prop_data_offset + prop_data_size as u64
+                && file.read_exact(&mut hdr_buf).is_ok()
             {
-                let ck_id = u32_from_byte_buffer(&chunk_header_buffer, 0);
-                let ck_data_size = u64_from_byte_buffer(&chunk_header_buffer, 4);
+                let ck_id = u32_from_byte_buffer(&hdr_buf, 0);
+                let ck_data_size = u64_from_byte_buffer(&hdr_buf, 4);
 
                 match ck_id {
                     FS_LABEL => {
-                        // FS chunk has 4 bytes of data.
                         let mut chunk_data_buffer: [u8; 4] = [0; 4];
                         file.read_exact(&mut chunk_data_buffer)?;
                         let fs_chunk = SampleRateChunk::try_from({
                             let mut buf = [0u8; 16];
-                            buf[0..12].copy_from_slice(&chunk_header_buffer);
+                            buf[0..12].copy_from_slice(&hdr_buf);
                             buf[12..16].copy_from_slice(&chunk_data_buffer);
                             buf
                         })?;
@@ -151,11 +125,10 @@ impl DffFile {
                             .insert(FS_LABEL, LocalChunk::SampleRate(fs_chunk));
                     }
                     CHNL_LABEL => {
-                        // Read CHNL chunk data (channel count + IDs).
                         let mut data_buf = vec![0u8; ck_data_size as usize];
                         file.read_exact(&mut data_buf)?;
                         let mut full_buf = Vec::with_capacity(12 + data_buf.len());
-                        full_buf.extend_from_slice(&chunk_header_buffer);
+                        full_buf.extend_from_slice(&hdr_buf);
                         full_buf.extend_from_slice(&data_buf);
                         if let Ok(chnl_chunk) = ChannelsChunk::try_from(full_buf.as_slice()) {
                             prop_chunk_inner
@@ -165,14 +138,12 @@ impl DffFile {
                         }
                     }
                     COMP_LABEL => {
-                        // Compression Type chunk (CMPR): variable length.
                         let mut data_buf = vec![0u8; ck_data_size as usize];
                         file.read_exact(&mut data_buf)?;
                         let mut full_buf = Vec::with_capacity(12 + data_buf.len());
-                        full_buf.extend_from_slice(&chunk_header_buffer);
+                        full_buf.extend_from_slice(&hdr_buf);
                         full_buf.extend_from_slice(&data_buf);
-                        if let Ok(cmpr_chunk) = CompressionTypeChunk::try_from(full_buf.as_slice())
-                        {
+                        if let Ok(cmpr_chunk) = CompressionTypeChunk::try_from(full_buf.as_slice()) {
                             prop_chunk_inner
                                 .chunk
                                 .local_chunks
@@ -180,15 +151,12 @@ impl DffFile {
                         }
                     }
                     ABS_TIME_LABEL => {
-                        // Absolute Start Time chunk (ABSS)
                         let mut data_buf = vec![0u8; ck_data_size as usize];
                         file.read_exact(&mut data_buf)?;
                         let mut full_buf = Vec::with_capacity(12 + data_buf.len());
-                        full_buf.extend_from_slice(&chunk_header_buffer);
+                        full_buf.extend_from_slice(&hdr_buf);
                         full_buf.extend_from_slice(&data_buf);
-
-                        if let Ok(abs_chunk) = AbsoluteStartTimeChunk::try_from(full_buf.as_slice())
-                        {
+                        if let Ok(abs_chunk) = AbsoluteStartTimeChunk::try_from(full_buf.as_slice()) {
                             prop_chunk_inner
                                 .chunk
                                 .local_chunks
@@ -196,16 +164,12 @@ impl DffFile {
                         }
                     }
                     LS_CONF_LABEL => {
-                        // Loudspeaker Configuration chunk (LSCO)
                         let mut data_buf = vec![0u8; ck_data_size as usize];
                         file.read_exact(&mut data_buf)?;
                         let mut full_buf = Vec::with_capacity(12 + data_buf.len());
-                        full_buf.extend_from_slice(&chunk_header_buffer);
+                        full_buf.extend_from_slice(&hdr_buf);
                         full_buf.extend_from_slice(&data_buf);
-
-                        if let Ok(lsco_chunk) =
-                            LoudspeakerConfigChunk::try_from(full_buf.as_slice())
-                        {
+                        if let Ok(lsco_chunk) = LoudspeakerConfigChunk::try_from(full_buf.as_slice()) {
                             prop_chunk_inner
                                 .chunk
                                 .local_chunks
@@ -213,7 +177,6 @@ impl DffFile {
                         }
                     }
                     _ => {
-                        // Unknown (or unhandled) chunk: skip its data
                         file.seek(SeekFrom::Current(ck_data_size as i64))?;
                     }
                 }
@@ -1218,6 +1181,30 @@ mod tests {
             }
             Err(error) => {
                 println!("Error: {}", error);
+            }
+        }
+    }
+}
+
+// Helper: scan forward for a chunk header matching `want_label`, error if `abort_label` appears first.
+// Returns the 12-byte header (ID + size). Skips payload (and pad byte if size is odd) of non-matching chunks.
+fn scan_until(file: &mut File, want_label: u32, abort_label: u32) -> Result<[u8; CHUNK_HEADER_SIZE as usize], Error> {
+    loop {
+        let mut hdr = [0u8; CHUNK_HEADER_SIZE as usize];
+        if let Err(e) = file.read_exact(&mut hdr) {
+            return Err(Error::PropChunkHeader).map_err(|_| Error::IoError(e))?;
+        }
+        let ck_id = u32_from_byte_buffer(&hdr, 0);
+        let ck_data_size = u64_from_byte_buffer(&hdr, 4);
+        if ck_id == want_label {
+            return Ok(hdr);
+        } else if ck_id == abort_label {
+            return Err(Error::PropChunkHeader);
+        } else {
+            // Skip payload + pad if odd
+            file.seek(SeekFrom::Current(ck_data_size as i64))?;
+            if ck_data_size & 1 == 1 {
+                file.seek(SeekFrom::Current(1))?;
             }
         }
     }
