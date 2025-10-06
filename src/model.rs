@@ -64,6 +64,8 @@ pub enum Error {
     LscoChunkSize,
     // NEW: compression type mismatch
     CmprTypeMismatch,
+    PrematureTagFound(String),
+    Eof,
 }
 
 #[derive(Debug, Clone)]

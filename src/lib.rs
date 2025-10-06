@@ -52,6 +52,35 @@ pub struct DffFile {
     dsd_data_offset: u64,
     dsd_audio_size: u64,
 }
+
+// Helper: scan forward for a chunk header matching `want_label`, error if `abort_label` appears first.
+// Returns the 12-byte header (ID + size). Skips payload (and pad byte if size is odd) of non-matching chunks.
+fn scan_until(file: &mut File, want_label: u32, abort_label: Option<u32>) -> Result<[u8; CHUNK_HEADER_SIZE as usize], Error> {
+    loop {
+        let mut hdr = [0u8; CHUNK_HEADER_SIZE as usize];
+        match file.read_exact(&mut hdr) {
+            Ok(_) => {},
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                return Err(Error::Eof);
+            }
+            Err(e) => return Err(Error::IoError(e)),
+        }
+        let ck_id = u32_from_byte_buffer(&hdr, 0);
+        let ck_data_size = u64_from_byte_buffer(&hdr, 4);
+        if ck_id == want_label {
+            return Ok(hdr);
+        } else if Some(ck_id) == abort_label {
+            return Err(Error::PrematureTagFound(String::from_utf8_lossy(&ck_id.to_be_bytes()).to_string()));
+        } else {
+            // Skip payload + pad if odd
+            file.seek(SeekFrom::Current(ck_data_size as i64))?;
+            if ck_data_size & 1 == 1 {
+                file.seek(SeekFrom::Current(1))?;
+            }
+        }
+    }
+}
+
 impl DffFile {
     /// Attempt to open and parse the metadata of DFF file in
     /// read-only mode. Sample data is not read into memory to keep
@@ -66,6 +95,7 @@ impl DffFile {
         let mut file = File::open(path)?;
         let mut hdr_buf = [0u8; CHUNK_HEADER_SIZE as usize];
         let mut chunk_buf16 = [0u8; 16];
+        let mut prop_buf4 = [0u8; 4];
 
         // FORM (FRM8)
         file.read_exact(&mut chunk_buf16)?;
@@ -80,13 +110,12 @@ impl DffFile {
             .insert(FVER_LABEL, LocalChunk::FormatVersion(fver_chunk));
 
         // Locate PROP (abort if DSD encountered first)
-        hdr_buf = scan_until(&mut file, PROP_LABEL, DSD_LABEL)?;
+        hdr_buf = scan_until(&mut file, PROP_LABEL, Some(DSD_LABEL))?;
         chunk_buf16[0..12].copy_from_slice(&hdr_buf);
 
         // Read property_type (4 bytes) then build 16-byte buffer
-        let mut prop_type = [0u8; 4];
-        file.read_exact(&mut prop_type)?;
-        chunk_buf16[12..16].copy_from_slice(&prop_type);
+        file.read_exact(&mut prop_buf4)?;
+        chunk_buf16[12..16].copy_from_slice(&prop_buf4);
 
         let pc = PropertyChunk::try_from(chunk_buf16)?;
         frm_chunk
@@ -183,11 +212,9 @@ impl DffFile {
             }
         }
 
-        let mut dsd_header_buffer: [u8; CHUNK_HEADER_SIZE as usize] =
-            [0; CHUNK_HEADER_SIZE as usize];
-        file.read_exact(&mut dsd_header_buffer)?;
+        hdr_buf = scan_until(&mut file, DSD_LABEL, None)?;
         let dsd_data_offset = file.stream_position()?;
-        let dsd_chunk = DsdChunk::try_from(dsd_header_buffer)?;
+        let dsd_chunk = DsdChunk::try_from(hdr_buf)?;
         let dsd_audio_size = dsd_chunk.chunk.header.ck_data_size;
         frm_chunk
             .chunk
@@ -207,16 +234,15 @@ impl DffFile {
             }
 
             // Read potential header
-            let mut hdr = [0u8; CHUNK_HEADER_SIZE as usize];
-            if let Err(e) = file.read_exact(&mut hdr) {
+            if let Err(e) = file.read_exact(&mut hdr_buf) {
                 if e.kind() == io::ErrorKind::UnexpectedEof {
                     break;
                 }
                 return Err(e.into());
             }
 
-            let ck_id = u32_from_byte_buffer(&hdr, 0);
-            let ck_data_size = u64_from_byte_buffer(&hdr, size_of::<ID>());
+            let ck_id = u32_from_byte_buffer(&hdr_buf, 0);
+            let ck_data_size = u64_from_byte_buffer(&hdr_buf, size_of::<ID>());
 
             // If payload would exceed FORM boundary, stop.
             if pos + CHUNK_HEADER_SIZE + ck_data_size > form_end {
@@ -1109,6 +1135,9 @@ impl fmt::Display for Error {
             Error::FormatVersion => f.write_str("A fmt chunk must specify version 1."),
             Error::Id3Error(id3_error) => write!(f, "Id3 error: {}", id3_error),
             Error::IoError(io_error) => write!(f, "IO error: {}", io_error),
+            Error::PrematureTagFound(e) => {
+                write!(f, "Chunk {} was found before it should have been.", e)
+            }
             Error::ReservedNotZero => {
                 f.write_str("A fmt chunk’s reserved space is expected to be zero filled.")
             }
@@ -1140,6 +1169,7 @@ impl fmt::Display for Error {
             }
             Error::LscoChunkSize => f.write_str("LSCO chunk size invalid or inconsistent."),
             Error::CmprTypeMismatch => f.write_str("Compression type must be 'DSD '."),
+            Error::Eof => f.write_str("Unexpected end of file."),
         }
     }
 }
@@ -1181,30 +1211,6 @@ mod tests {
             }
             Err(error) => {
                 println!("Error: {}", error);
-            }
-        }
-    }
-}
-
-// Helper: scan forward for a chunk header matching `want_label`, error if `abort_label` appears first.
-// Returns the 12-byte header (ID + size). Skips payload (and pad byte if size is odd) of non-matching chunks.
-fn scan_until(file: &mut File, want_label: u32, abort_label: u32) -> Result<[u8; CHUNK_HEADER_SIZE as usize], Error> {
-    loop {
-        let mut hdr = [0u8; CHUNK_HEADER_SIZE as usize];
-        if let Err(e) = file.read_exact(&mut hdr) {
-            return Err(Error::PropChunkHeader).map_err(|_| Error::IoError(e))?;
-        }
-        let ck_id = u32_from_byte_buffer(&hdr, 0);
-        let ck_data_size = u64_from_byte_buffer(&hdr, 4);
-        if ck_id == want_label {
-            return Ok(hdr);
-        } else if ck_id == abort_label {
-            return Err(Error::PropChunkHeader);
-        } else {
-            // Skip payload + pad if odd
-            file.seek(SeekFrom::Current(ck_data_size as i64))?;
-            if ck_data_size & 1 == 1 {
-                file.seek(SeekFrom::Current(1))?;
             }
         }
     }
