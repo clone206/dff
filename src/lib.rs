@@ -259,7 +259,9 @@ impl DffFile {
             let mut data = vec![0u8; ck_data_size as usize];
             file.read_exact(&mut data)?;
 
-            let tag = id3::Tag::read_from(&mut &data[..]).ok();
+            // Use non-deprecated API: read_from2 requires Read + Seek; use a Cursor over the data
+            let mut cursor = std::io::Cursor::new(&data);
+            let tag = id3::Tag::read_from2(&mut cursor).ok();
             let id3_chunk = Id3Chunk {
                 chunk: Chunk::new(ChunkHeader {
                     ck_id,
