@@ -351,6 +351,24 @@ impl DffFile {
         };
         Ok(fver_chunk.format_version)
     }
+
+    /// Recursively dump all parsed chunks to stderr with helpful details.
+    /// Does not re-read the file; uses the already parsed model.
+    pub fn dump_chunks_stderr(&self) {
+        // Root FORM/FRM8
+        eprintln!(
+            "FRM8 form='{}' size={} (includes header)",
+            fourcc(self.frm_chunk.form_type),
+            self.get_form_chunk_size()
+        );
+        // Walk children of FORM
+        walk_local_chunks(&self.frm_chunk.chunk.local_chunks, 1);
+        // Helpful footer for audio payload
+        eprintln!(
+            "DSD payload: offset={} bytes, length={} bytes",
+            self.dsd_data_offset, self.dsd_audio_size
+        );
+    }
 }
 impl fmt::Display for DffFile {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -370,6 +388,163 @@ impl fmt::Display for DffFile {
                 String::from("No ID3 tag present.")
             }
         )
+    }
+}
+
+// ----- Introspection helpers -----
+
+fn indent(depth: usize) -> String {
+    const PAD: &str = "  ";
+    let mut s = String::new();
+    for _ in 0..depth {
+        s.push_str(PAD);
+    }
+    s
+}
+
+fn fourcc(id: u32) -> String {
+    let b = id.to_be_bytes();
+    String::from_utf8_lossy(&b).to_string()
+}
+
+fn walk_local_chunks(map: &HashMap<ID, LocalChunk>, depth: usize) {
+    // Stable order by ID for nicer output
+    let mut items: Vec<(&ID, &LocalChunk)> = map.iter().collect();
+    items.sort_by_key(|(id, _)| **id);
+
+    for (_id, lc) in items {
+        match lc {
+            LocalChunk::FormatVersion(c) => {
+                let i = indent(depth);
+                let ck_id = c.chunk.header.ck_id;
+                let size = c.chunk.header.ck_data_size;
+                eprintln!(
+                    "{}FVER ({}) size={} version={}",
+                    i,
+                    fourcc(ck_id),
+                    size,
+                    c.format_version
+                );
+            }
+            LocalChunk::Property(c) => {
+                let i = indent(depth);
+                let ck_id = c.chunk.header.ck_id;
+                let size = c.chunk.header.ck_data_size;
+                eprintln!(
+                    "{}PROP ({}) size={} type='{}' children={}",
+                    i,
+                    fourcc(ck_id),
+                    size,
+                    fourcc(c.property_type),
+                    c.chunk.local_chunks.len()
+                );
+                // Recurse into PROP children
+                walk_local_chunks(&c.chunk.local_chunks, depth + 1);
+            }
+            LocalChunk::SampleRate(c) => {
+                let i = indent(depth);
+                let ck_id = c.chunk.header.ck_id;
+                let size = c.chunk.header.ck_data_size;
+                eprintln!(
+                    "{}FS   ({}) size={} sample_rate={} Hz",
+                    i,
+                    fourcc(ck_id),
+                    size,
+                    c.sample_rate
+                );
+            }
+            LocalChunk::Channels(c) => {
+                let i = indent(depth);
+                let ck_id = c.chunk.header.ck_id;
+                let size = c.chunk.header.ck_data_size;
+                let ids: Vec<String> = c
+                    .ch_id
+                    .iter()
+                    .map(|v| fourcc(*v))
+                    .collect();
+                eprintln!(
+                    "{}CHNL ({}) size={} channels={} ids=[{}]",
+                    i,
+                    fourcc(ck_id),
+                    size,
+                    c.num_channels,
+                    ids.join(", ")
+                );
+            }
+            LocalChunk::CompressionType(c) => {
+                let i = indent(depth);
+                let ck_id = c.chunk.header.ck_id;
+                let size = c.chunk.header.ck_data_size;
+                eprintln!(
+                    "{}CMPR ({}) size={} type='{}' name=\"{}\"",
+                    i,
+                    fourcc(ck_id),
+                    size,
+                    fourcc(c.compression_type),
+                    c.compression_name
+                );
+            }
+            LocalChunk::AbsoluteStartTime(c) => {
+                let i = indent(depth);
+                let ck_id = c.chunk.header.ck_id;
+                let size = c.chunk.header.ck_data_size;
+                eprintln!(
+                    "{}ABSS ({}) size={} {:02}:{:02}:{:02}.samples={}",
+                    i,
+                    fourcc(ck_id),
+                    size,
+                    c.hours,
+                    c.minutes,
+                    c.seconds,
+                    c.samples
+                );
+            }
+            LocalChunk::LoudspeakerConfig(c) => {
+                let i = indent(depth);
+                let ck_id = c.chunk.header.ck_id;
+                let size = c.chunk.header.ck_data_size;
+                eprintln!(
+                    "{}LSCO ({}) size={} config=0x{:04X}",
+                    i,
+                    fourcc(ck_id),
+                    size,
+                    c.ls_config
+                );
+            }
+            LocalChunk::Dsd(c) => {
+                let i = indent(depth);
+                let ck_id = c.chunk.header.ck_id;
+                let size = c.chunk.header.ck_data_size;
+                eprintln!(
+                    "{}DSD  ({}) size={} (raw DSD audio)",
+                    i,
+                    fourcc(ck_id),
+                    size
+                );
+            }
+            LocalChunk::Id3(c) => {
+                let i = indent(depth);
+                let ck_id = c.chunk.header.ck_id;
+                let size = c.chunk.header.ck_data_size;
+                if let Some(tag) = &c.tag {
+                    let frames = tag.frames().count();
+                    eprintln!(
+                        "{}ID3  ({}) size={} frames={}",
+                        i,
+                        fourcc(ck_id),
+                        size,
+                        frames
+                    );
+                } else {
+                    eprintln!(
+                        "{}ID3  ({}) size={} (no tag parsed)",
+                        i,
+                        fourcc(ck_id),
+                        size
+                    );
+                }
+            }
+        }
     }
 }
 
@@ -626,7 +801,7 @@ impl TryFrom<&[u8]> for ChannelsChunk {
         if chunk.chunk.header.ck_id != CHNL_LABEL {
             return Err(Error::ChnlChunkHeader);
         }
-        if expected_ids_bytes != chunk.ch_id.len() {
+        if expected_ids_bytes != chunk.ch_id.len() * 4 {
             return Err(Error::ChnlChunkSize);
         }
         Ok(chunk)
