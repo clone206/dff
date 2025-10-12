@@ -27,9 +27,6 @@
 //! }
 //! ```
 
-// Get pedantic warnings when linting with `cargo clippy`.
-#![warn(clippy::pedantic)]
-
 mod id3_display;
 mod model;
 
@@ -55,11 +52,15 @@ pub struct DffFile {
 
 // Helper: scan forward for a chunk header matching `want_label`, error if `abort_label` appears first.
 // Returns the 12-byte header (ID + size). Skips payload (and pad byte if size is odd) of non-matching chunks.
-fn scan_until(file: &mut File, want_label: u32, abort_label: Option<u32>) -> Result<[u8; CHUNK_HEADER_SIZE as usize], Error> {
+fn scan_until(
+    file: &mut File,
+    want_label: u32,
+    abort_label: Option<u32>,
+) -> Result<[u8; CHUNK_HEADER_SIZE as usize], Error> {
     loop {
         let mut hdr = [0u8; CHUNK_HEADER_SIZE as usize];
         match file.read_exact(&mut hdr) {
-            Ok(_) => {},
+            Ok(_) => {}
             Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
                 return Err(Error::Eof);
             }
@@ -70,7 +71,9 @@ fn scan_until(file: &mut File, want_label: u32, abort_label: Option<u32>) -> Res
         if ck_id == want_label {
             return Ok(hdr);
         } else if Some(ck_id) == abort_label {
-            return Err(Error::PrematureTagFound(String::from_utf8_lossy(&ck_id.to_be_bytes()).to_string()));
+            return Err(Error::PrematureTagFound(
+                String::from_utf8_lossy(&ck_id.to_be_bytes()).to_string(),
+            ));
         } else {
             // Skip payload + pad if odd
             file.seek(SeekFrom::Current(ck_data_size as i64))?;
@@ -93,7 +96,6 @@ impl DffFile {
     ///
     pub fn open(path: &Path) -> Result<DffFile, Error> {
         let mut file = File::open(path)?;
-        let mut hdr_buf = [0u8; CHUNK_HEADER_SIZE as usize];
         let mut chunk_buf16 = [0u8; 16];
         let mut prop_buf4 = [0u8; 4];
 
@@ -110,9 +112,9 @@ impl DffFile {
             .insert(FVER_LABEL, LocalChunk::FormatVersion(fver_chunk));
 
         // Locate PROP (abort if DSD encountered first)
-        hdr_buf = scan_until(&mut file, PROP_LABEL, Some(DSD_LABEL))?;
-        chunk_buf16[0..12].copy_from_slice(&hdr_buf);
-
+        // Locate PROP (abort if DSD encountered first)
+                let mut hdr_buf = scan_until(&mut file, PROP_LABEL, Some(DSD_LABEL))?;
+                chunk_buf16[0..12].copy_from_slice(&hdr_buf);
         // Read property_type (4 bytes) then build 16-byte buffer
         file.read_exact(&mut prop_buf4)?;
         chunk_buf16[12..16].copy_from_slice(&prop_buf4);
@@ -172,7 +174,8 @@ impl DffFile {
                         let mut full_buf = Vec::with_capacity(12 + data_buf.len());
                         full_buf.extend_from_slice(&hdr_buf);
                         full_buf.extend_from_slice(&data_buf);
-                        if let Ok(cmpr_chunk) = CompressionTypeChunk::try_from(full_buf.as_slice()) {
+                        if let Ok(cmpr_chunk) = CompressionTypeChunk::try_from(full_buf.as_slice())
+                        {
                             prop_chunk_inner
                                 .chunk
                                 .local_chunks
@@ -185,7 +188,8 @@ impl DffFile {
                         let mut full_buf = Vec::with_capacity(12 + data_buf.len());
                         full_buf.extend_from_slice(&hdr_buf);
                         full_buf.extend_from_slice(&data_buf);
-                        if let Ok(abs_chunk) = AbsoluteStartTimeChunk::try_from(full_buf.as_slice()) {
+                        if let Ok(abs_chunk) = AbsoluteStartTimeChunk::try_from(full_buf.as_slice())
+                        {
                             prop_chunk_inner
                                 .chunk
                                 .local_chunks
@@ -198,7 +202,9 @@ impl DffFile {
                         let mut full_buf = Vec::with_capacity(12 + data_buf.len());
                         full_buf.extend_from_slice(&hdr_buf);
                         full_buf.extend_from_slice(&data_buf);
-                        if let Ok(lsco_chunk) = LoudspeakerConfigChunk::try_from(full_buf.as_slice()) {
+                        if let Ok(lsco_chunk) =
+                            LoudspeakerConfigChunk::try_from(full_buf.as_slice())
+                        {
                             prop_chunk_inner
                                 .chunk
                                 .local_chunks
@@ -242,8 +248,7 @@ impl DffFile {
             }
 
             let ck_id = u32_from_byte_buffer(&hdr_buf, 0);
-            let ck_data_size = u64_from_byte_buffer(&hdr_buf, size_of::<ID>());
-
+            let ck_data_size = u64_from_byte_buffer(&hdr_buf, std::mem::size_of::<ID>());
             // If payload would exceed FORM boundary, stop.
             if pos + CHUNK_HEADER_SIZE + ck_data_size > form_end {
                 break;
@@ -293,32 +298,6 @@ impl DffFile {
         &self.file
     }
 
-    // /// Return a reference to the optional `ID3v2` [Tag](id3::Tag).
-    // #[must_use]
-    // pub fn id3_tag(&self) -> &Option<Tag> {
-    //     &self.id3_tag
-    // }
-
-    /// Return a representation of the sample data as [`Frames`](struct.Frames.html).
-    ///
-    /// # Errors
-    ///
-    /// This function will return an error if the sample data is not readable.
-    pub fn frames(&mut self) -> Result<Frames, Error> {
-        Frames::new(self)
-    }
-
-    /// Return an
-    /// [`InterleavedU32SamplesIter`](struct.InterleavedU32SamplesIter.html)
-    /// for the sample data contained in this DFF file.
-    ///
-    /// # Errors
-    ///
-    /// This function will return an error if the sample data is not readable.
-    pub fn interleaved_u32_samples_iter(&mut self) -> Result<InterleavedU32SamplesIter, Error> {
-        InterleavedU32SamplesIter::new(self)
-    }
-
     pub fn get_dsd_data_offset(&self) -> u64 {
         self.dsd_data_offset
     }
@@ -365,19 +344,26 @@ impl DffFile {
         }
     }
 
-    // TODO: fn channel_samples_iter(channel_index: u32) -> ChannelSamplesIter
+    pub fn get_dff_version(&self) -> Result<u32, Error> {
+        let fver_chunk = match self.frm_chunk.chunk.local_chunks.get(&FVER_LABEL) {
+            Some(LocalChunk::FormatVersion(fver)) => fver,
+            _ => return Err(Error::FverChunkHeader),
+        };
+        Ok(fver_chunk.format_version)
+    }
 }
 impl fmt::Display for DffFile {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
             f,
-            "File size: {} bytes\nForm Chunk Size: {} bytes\nDSD Audio Offset: {} bytes\nAudio Length: {} bytes\nChannels: {}\nSample Rate: {} Hz\nID3 Tag:\n{}",
+            "File size: {} bytes\nForm Chunk Size: {} bytes\nDSD Audio Offset: {} bytes\nAudio Length: {} bytes\nChannels: {}\nSample Rate: {} Hz\nDFF Version: {}\nID3 Tag:\n{}",
             self.get_file_size().unwrap_or(0),
             self.get_form_chunk_size(),
             self.get_dsd_data_offset(),
             self.get_audio_length(),
             self.get_num_channels().unwrap_or(0),
             self.get_sample_rate().unwrap_or(0),
+            self.get_dff_version().unwrap_or(0),
             if let Some(tag) = &self.id3_tag() {
                 id3_display::id3_tag_to_string(tag)
             } else {
@@ -439,24 +425,25 @@ impl TryFrom<[u8; 16]> for FormDsdChunk {
         };
 
         let ck_id = be_u32(0);
-        if ck_id != u32::from_be_bytes(*b"FRM8") {
-            return Err(Error::FormChunkHeader);
-        }
-
         let ck_data_size = be_u64(4);
         let form_type = be_u32(12);
-        if form_type != DSD_LABEL {
-            return Err(Error::FormTypeMismatch);
-        }
-
         let header = ChunkHeader {
             ck_id,
             ck_data_size,
         };
-        Ok(FormDsdChunk {
+        let chunk = FormDsdChunk {
             chunk: Chunk::new(header),
             form_type,
-        })
+        };
+
+        if !chunk.is_valid() {
+            return Err(Error::FormChunkHeader);
+        }
+        if chunk.form_type != DSD_LABEL {
+            return Err(Error::FormTypeMismatch);
+        }
+
+        Ok(chunk)
     }
 }
 
@@ -476,24 +463,25 @@ impl TryFrom<[u8; 16]> for FormatVersionChunk {
         };
 
         let ck_id = be_u32(0);
-        if ck_id != FVER_LABEL {
-            return Err(Error::FverChunkHeader);
-        }
-
         let ck_data_size = be_u64(4);
-        if ck_data_size != 4 {
-            return Err(Error::FverChunkSize);
-        }
-
         let version = be_u32(12);
         let header = ChunkHeader {
             ck_id,
             ck_data_size,
         };
-        Ok(FormatVersionChunk {
+        let chunk = FormatVersionChunk {
             chunk: Chunk::new(header),
             format_version: version,
-        })
+        };
+
+        if chunk.chunk.header.ck_id != FVER_LABEL {
+            return Err(Error::FverChunkHeader);
+        }
+        if chunk.chunk.header.ck_data_size != 4 {
+            return Err(Error::FverChunkSize);
+        }
+
+        Ok(chunk)
     }
 }
 
@@ -512,27 +500,29 @@ impl TryFrom<[u8; 16]> for PropertyChunk {
         };
 
         let ck_id = be_u32(0);
-        if ck_id != PROP_LABEL {
-            return Err(Error::PropChunkHeader);
-        }
         let ck_data_size = be_u64(4);
         // Must at least contain 4 bytes for property_type.
         if ck_data_size < 4 {
             return Err(Error::ChnlChunkSize); // reuse generic size error not ideal; kept minimal
         }
         let property_type = be_u32(12);
-        if property_type != SND_LABEL {
-            return Err(Error::PropChunkType);
-        }
 
         let header = ChunkHeader {
             ck_id,
             ck_data_size,
         };
-        Ok(PropertyChunk {
+        let chunk = PropertyChunk {
             chunk: Chunk::new(header),
             property_type,
-        })
+        };
+
+        if chunk.chunk.header.ck_id != PROP_LABEL {
+            return Err(Error::PropChunkHeader);
+        }
+        if chunk.property_type != SND_LABEL {
+            return Err(Error::PropChunkType);
+        }
+        Ok(chunk)
     }
 }
 
@@ -551,23 +541,25 @@ impl TryFrom<[u8; 16]> for SampleRateChunk {
         };
 
         let ck_id = be_u32(0);
-        if ck_id != FS_LABEL {
-            return Err(Error::FsChunkHeader);
-        }
         let ck_data_size = be_u64(4);
-        if ck_data_size != 4 {
-            return Err(Error::FsChunkSize);
-        }
         let sample_rate = be_u32(12);
 
         let header = ChunkHeader {
             ck_id,
             ck_data_size,
         };
-        Ok(SampleRateChunk {
+        let chunk = SampleRateChunk {
             chunk: Chunk::new(header),
             sample_rate,
-        })
+        };
+
+        if chunk.chunk.header.ck_id != FS_LABEL {
+            return Err(Error::FsChunkHeader);
+        }
+        if chunk.chunk.header.ck_data_size != 4 {
+            return Err(Error::FsChunkSize);
+        }
+        Ok(chunk)
     }
 }
 
@@ -583,9 +575,6 @@ impl TryFrom<&[u8]> for ChannelsChunk {
             a.copy_from_slice(&buf[0..4]);
             u32::from_be_bytes(a)
         };
-        if ck_id != CHNL_LABEL {
-            return Err(Error::ChnlChunkHeader);
-        }
 
         let ck_data_size = {
             let mut a = [0u8; 8];
@@ -627,11 +616,20 @@ impl TryFrom<&[u8]> for ChannelsChunk {
             ck_id,
             ck_data_size,
         };
-        Ok(ChannelsChunk {
+
+        let chunk = ChannelsChunk {
             chunk: Chunk::new(header),
             num_channels,
             ch_id: channel_ids,
-        })
+        };
+
+        if chunk.chunk.header.ck_id != CHNL_LABEL {
+            return Err(Error::ChnlChunkHeader);
+        }
+        if expected_ids_bytes != chunk.ch_id.len() {
+            return Err(Error::ChnlChunkSize);
+        }
+        Ok(chunk)
     }
 }
 
@@ -649,9 +647,6 @@ impl TryFrom<&[u8]> for CompressionTypeChunk {
             a.copy_from_slice(&buf[0..4]);
             u32::from_be_bytes(a)
         };
-        if ck_id != COMP_LABEL {
-            return Err(Error::CmprChunkHeader);
-        }
 
         let ck_data_size = {
             let mut a = [0u8; 8];
@@ -669,12 +664,6 @@ impl TryFrom<&[u8]> for CompressionTypeChunk {
             u32::from_be_bytes(a)
         };
 
-        // New check: must be 'DSD '
-        // DST not yet implemented
-        if compression_type != DSD_LABEL {
-            return Err(Error::CmprTypeMismatch);
-        }
-
         // Remaining bytes (if any) are a UTF-8 / ASCII name, often null terminated
         let name_bytes = if ck_data_size > 4 {
             &buf[16..(12 + ck_data_size as usize)]
@@ -687,14 +676,24 @@ impl TryFrom<&[u8]> for CompressionTypeChunk {
             Err(_) => String::new(),
         };
 
-        Ok(CompressionTypeChunk {
+        let chunk = CompressionTypeChunk {
             chunk: Chunk::new(ChunkHeader {
                 ck_id,
                 ck_data_size,
             }),
             compression_type,
             compression_name,
-        })
+        };
+
+        if chunk.chunk.header.ck_id != COMP_LABEL {
+            return Err(Error::CmprChunkHeader);
+        }
+        // New check: must be 'DSD '
+        // DST not yet implemented
+        if chunk.compression_type != DSD_LABEL || chunk.compression_name == "DST Encoded" {
+            return Err(Error::CmprTypeMismatch);
+        }
+        Ok(chunk)
     }
 }
 
@@ -711,9 +710,6 @@ impl TryFrom<&[u8]> for AbsoluteStartTimeChunk {
             a.copy_from_slice(&buf[0..4]);
             u32::from_be_bytes(a)
         };
-        if ck_id != ABS_TIME_LABEL {
-            return Err(Error::AbssChunkHeader);
-        }
         // Data size (must be 8 bytes for: hours(2) + minutes(1) + seconds(1) + samples(4))
         let ck_data_size = {
             let mut a = [0u8; 8];
@@ -742,7 +738,7 @@ impl TryFrom<&[u8]> for AbsoluteStartTimeChunk {
             u32::from_be_bytes(a)
         };
 
-        Ok(AbsoluteStartTimeChunk {
+        let chunk = AbsoluteStartTimeChunk {
             chunk: Chunk::new(ChunkHeader {
                 ck_id,
                 ck_data_size,
@@ -751,7 +747,12 @@ impl TryFrom<&[u8]> for AbsoluteStartTimeChunk {
             minutes,
             seconds,
             samples,
-        })
+        };
+
+        if chunk.chunk.header.ck_id != ABS_TIME_LABEL {
+            return Err(Error::AbssChunkHeader);
+        }
+        Ok(chunk)
     }
 }
 
@@ -776,8 +777,7 @@ impl TryFrom<&[u8]> for LoudspeakerConfigChunk {
             u64::from_be_bytes(a)
         };
 
-        // LSCO payload is exactly 2 bytes (U16 loudspeaker configuration code)
-        if ck_data_size != 2 || buf.len() as u64 != 12 + ck_data_size {
+        if buf.len() as u64 != 12 + ck_data_size {
             return Err(Error::LscoChunkSize);
         }
 
@@ -787,13 +787,19 @@ impl TryFrom<&[u8]> for LoudspeakerConfigChunk {
             u16::from_be_bytes(a)
         };
 
-        Ok(LoudspeakerConfigChunk {
+        let chunk = LoudspeakerConfigChunk {
             chunk: Chunk::new(ChunkHeader {
                 ck_id,
                 ck_data_size,
             }),
             ls_config,
-        })
+        };
+
+        // LSCO payload is exactly 2 bytes (U16 loudspeaker configuration code)
+        if chunk.chunk.header.ck_data_size != 2 {
+            return Err(Error::LscoChunkSize);
+        }
+        Ok(chunk)
     }
 }
 
@@ -832,283 +838,6 @@ impl TryFrom<[u8; 12]> for DsdChunk {
                 ck_data_size,
             }),
         })
-    }
-}
-/// Representation of the frames of an associated
-/// [`DffFile`](struct.DffFile.html).
-pub struct Frames<'a> {
-    channels: usize,
-    dff_file: &'a mut DffFile,
-    frame: Vec<u8>,
-    frame_index: u64,
-    frame_count: u64,
-    reverse_bits: bool,
-}
-impl<'a> Frames<'a> {
-    /// Make a new `Frames` struct from the `dff_file`.
-    fn new(dff_file: &mut DffFile) -> Result<Frames, Error> {
-        let channels = dff_file.get_num_channels()?;
-        let frame_size = BLOCK_SIZE * channels;
-        let frame_count = dff_file.get_audio_length() / frame_size as u64;
-        let frame = vec![0u8; frame_size];
-        let reverse_bits = false;
-
-        let mut frames = Frames {
-            channels,
-            dff_file,
-            frame,
-            frame_index: 0,
-            frame_count,
-            reverse_bits,
-        };
-
-        frames.load_frame(0)?;
-
-        Ok(frames)
-    }
-
-    /// Return the offset (position in the DFF file in bytes) of the
-    /// specified frame.
-    ///
-    /// Note that `frame_index` is zero-based so the first frame has
-    /// `frame_index=0`, etc.
-    ///
-    /// # Errors
-    ///
-    /// This method returns an error if`frame_index >= frame_count`.
-    pub fn offset(&self, frame_index: u64) -> Result<u64, Error> {
-        if frame_index >= self.frame_count {
-            return Err(Error::FrameIndexOutOfRange);
-        }
-
-        Ok(self.offset_unchecked(frame_index))
-    }
-
-    /// Return the offset (position in the DFF file in bytes) of the
-    /// specified frame.
-    ///
-    /// # Panic
-    ///
-    /// This method will panic if `frame_index` is out of range. Use
-    /// the checked version of this method if you can not be sure of
-    /// the correctness of `frame_index`.
-    fn offset_unchecked(&self, frame_index: u64) -> u64 {
-        debug_assert!(frame_index <= self.frame_count);
-
-        self.dff_file.get_dsd_data_offset() + frame_index * (BLOCK_SIZE * self.channels) as u64
-    }
-
-    /// Load the frame specified by `frame_index` into memory.
-    ///
-    /// The `Frames` struct keeps only one frame in memory at a
-    /// time.
-    ///
-    /// # Errors
-    ///
-    ///  This method returns an error if `frames_index` is out of
-    /// range or there is an `io::Error`.
-    ///
-    pub fn load_frame(&mut self, frame_index: u64) -> Result<(), Error> {
-        if frame_index >= self.frame_count {
-            return Err(Error::FrameIndexOutOfRange);
-        }
-
-        self.dff_file
-            .file
-            .seek(SeekFrom::Start(self.offset_unchecked(frame_index)))?;
-
-        // Read BLOCK_SIZE bytes per channel into the flat frame buffer.
-        for ch in 0..self.channels {
-            let start = ch * BLOCK_SIZE;
-            let end = start + BLOCK_SIZE;
-            self.dff_file.file.read_exact(&mut self.frame[start..end])?;
-        }
-
-        self.frame_index = frame_index;
-
-        Ok(())
-    }
-    /// The `Frames` struct keeps only one frame in memory at a
-    /// time. This method does not check that `frame_index` is valid
-    /// and only returns errors for `io::Errors`. You should only use
-    /// this method if you can be sure of the correctness of
-    /// `frame_index`, otherwise you should use the checked version of
-    /// this method.
-    fn load_frame_unchecked(&mut self, frame_index: u64) -> Result<(), Error> {
-        debug_assert!(frame_index < self.frame_count);
-
-        self.dff_file
-            .file
-            .seek(SeekFrom::Start(self.offset_unchecked(frame_index)))?;
-
-        for ch in 0..self.channels {
-            let start = ch * BLOCK_SIZE;
-            let end = start + BLOCK_SIZE;
-            self.dff_file.file.read_exact(&mut self.frame[start..end])?;
-        }
-
-        self.frame_index = frame_index;
-
-        Ok(())
-    }
-
-    /// Return a `u32` containing the specified sample and channel.
-    ///
-    /// # Errors
-    pub fn samples_as_u32(
-        &mut self,
-        channel_index: usize,
-        sample_index: u64,
-    ) -> Result<u32, Error> {
-        if channel_index >= self.channels {
-            return Err(Error::ChannelIndexOutOfRange);
-        }
-
-        // Stub: translate sample_index to (frame_index, block_index) later.
-        let (frame_index, block_index) = (0, 0);
-
-        if self.frame_index != frame_index {
-            self.load_frame(frame_index)?;
-        }
-
-        let base = channel_index * BLOCK_SIZE + block_index;
-        let b0 = self.frame[base];
-        let b1 = self.frame[base + 1];
-        let b2 = self.frame[base + 2];
-        let b3 = self.frame[base + 3];
-
-        let samples_as_u8_array: [u8; 4] = if self.reverse_bits {
-            [
-                b0.reverse_bits(),
-                b1.reverse_bits(),
-                b2.reverse_bits(),
-                b3.reverse_bits(),
-            ]
-        } else {
-            [b0, b1, b2, b3]
-        };
-
-        Ok(u32::from_le_bytes(samples_as_u8_array))
-    }
-
-    fn samples_as_u32_unchecked(
-        &mut self,
-        channel_index: usize,
-        sample_index: u64,
-    ) -> Result<u32, Error> {
-        debug_assert!(channel_index < self.channels);
-
-        let (frame_index, block_index) = (0, 0);
-
-        if self.frame_index != frame_index {
-            self.load_frame_unchecked(frame_index)?;
-        }
-
-        let base = channel_index * BLOCK_SIZE + block_index;
-        let b0 = self.frame[base];
-        let b1 = self.frame[base + 1];
-        let b2 = self.frame[base + 2];
-        let b3 = self.frame[base + 3];
-
-        let samples_as_u8_array: [u8; 4] = if self.reverse_bits {
-            [
-                b0.reverse_bits(),
-                b1.reverse_bits(),
-                b2.reverse_bits(),
-                b3.reverse_bits(),
-            ]
-        } else {
-            [b0, b1, b2, b3]
-        };
-
-        Ok(u32::from_le_bytes(samples_as_u8_array))
-    }
-}
-/// Iterator which returns samples as a `u32`.
-///
-/// Each call of `next()` returns 32 DSD samples as a `u32`. The
-/// samples are interleaved in the sense that for a stereo file each
-/// iteration will return: left, right, left, right, left…
-///
-/// This is typically how DSD data is sent to a DAC.
-pub struct InterleavedU32SamplesIter<'a> {
-    channel_index: usize,
-    channels: usize,
-    frames: Frames<'a>,
-    sample_index: u64,
-    sample_count: u64,
-}
-impl<'a> InterleavedU32SamplesIter<'a> {
-    /// Make a new `InterleavedU32SamplesIter` for the specified `dsf_file`.
-    fn new(dff_file: &mut DffFile) -> Result<InterleavedU32SamplesIter, Error> {
-        let channels = dff_file.get_num_channels()?;
-        // Total bits = audio_length * 8 / channels / block_size normalization left TODO.
-        let sample_count = dff_file.get_audio_length() * 8 / channels as u64;
-        let frames = Frames::new(dff_file)?;
-
-        Ok(InterleavedU32SamplesIter {
-            channel_index: 0,
-            channels,
-            frames,
-            sample_index: 0,
-            sample_count,
-        })
-    }
-
-    /// Return the current `sample_index`, which starts from 0 and
-    /// goes up to `sample_count - 1`.
-    #[must_use]
-    pub fn sample_index(&self) -> u64 {
-        self.sample_index
-    }
-
-    /// Return the sample count for the associated DFF file.
-    #[must_use]
-    pub fn sample_count(&self) -> u64 {
-        self.sample_count
-    }
-
-    /// Set the position of this iterator, so that `sample_index` is
-    /// included in the next iteration. The returned `sample_index` is
-    /// normalised so that it corresponds to the first 1-bit sample in
-    /// the next returned `u32`. An error is returned if the requested
-    /// `sample_index` is out of range.
-    ///
-    /// This method is useful for seeking to a specific sample.
-    /// This method is useful for seeking to a specific sample.
-    /// `sample_index` is normalised so that it corresponds to the
-    /// first 1-bit sample in the next returned `u32`.
-    /// # Errors
-    pub fn set_sample_index(&mut self, sample_index: u64) -> Result<u64, Error> {
-        if sample_index >= self.sample_count {
-            return Err(Error::SampleIndexOutOfRange);
-        }
-
-        let normalized_sample_index = 32 * (sample_index / 32);
-        self.sample_index = normalized_sample_index;
-
-        Ok(normalized_sample_index)
-    }
-}
-impl<'a> Iterator for InterleavedU32SamplesIter<'a> {
-    type Item = u32;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        match self
-            .frames
-            .samples_as_u32_unchecked(self.channel_index, self.sample_index)
-        {
-            Ok(samples_as_u32) => {
-                self.channel_index += 1;
-                if self.channel_index >= self.channels {
-                    self.channel_index = 0;
-                    self.sample_index += 32;
-                }
-
-                Some(samples_as_u32)
-            }
-            Err(_) => None,
-        }
     }
 }
 

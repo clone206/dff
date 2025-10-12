@@ -74,10 +74,10 @@ pub enum LocalChunk {
     Property(PropertyChunk),
     SampleRate(SampleRateChunk),
     Channels(ChannelsChunk),
-    CompressionType(CompressionTypeChunk),
-    AbsoluteStartTime(AbsoluteStartTimeChunk),
-    LoudspeakerConfig(LoudspeakerConfigChunk),
-    Dsd(DsdChunk),
+    CompressionType(#[allow(dead_code)]CompressionTypeChunk),
+    AbsoluteStartTime(#[allow(dead_code)]AbsoluteStartTimeChunk),
+    LoudspeakerConfig(#[allow(dead_code)]LoudspeakerConfigChunk),
+    Dsd(#[allow(dead_code)] DsdChunk),
     Id3(Id3Chunk), // NEW
 }
 
@@ -139,15 +139,20 @@ pub struct CompressionTypeChunk {
 #[derive(Debug, Clone)]
 pub struct AbsoluteStartTimeChunk {
     pub chunk: Chunk,
+    #[allow(dead_code)]
     pub hours: Ushort,
+    #[allow(dead_code)]
     pub minutes: Uchar,
+    #[allow(dead_code)]
     pub seconds: Uchar,
+    #[allow(dead_code)]
     pub samples: Ulong,
 }
 
 #[derive(Debug, Clone)]
 pub struct LoudspeakerConfigChunk {
     pub chunk: Chunk,
+    #[allow(dead_code)]
     pub ls_config: Ushort,
 }
 
@@ -158,6 +163,7 @@ pub struct DsdChunk {
 
 #[derive(Debug, Clone)]
 pub struct Id3Chunk {
+    #[allow(dead_code)]
     pub chunk: Chunk,
     pub tag: Option<Tag>,
 }
