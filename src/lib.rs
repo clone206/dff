@@ -112,9 +112,8 @@ impl DffFile {
             .insert(FVER_LABEL, LocalChunk::FormatVersion(fver_chunk));
 
         // Locate PROP (abort if DSD encountered first)
-        // Locate PROP (abort if DSD encountered first)
-                let mut hdr_buf = scan_until(&mut file, PROP_LABEL, Some(DSD_LABEL))?;
-                chunk_buf16[0..12].copy_from_slice(&hdr_buf);
+        let mut hdr_buf = scan_until(&mut file, PROP_LABEL, Some(DSD_LABEL))?;
+        chunk_buf16[0..12].copy_from_slice(&hdr_buf);
         // Read property_type (4 bytes) then build 16-byte buffer
         file.read_exact(&mut prop_buf4)?;
         chunk_buf16[12..16].copy_from_slice(&prop_buf4);
@@ -313,7 +312,7 @@ impl DffFile {
         };
         match prop_chunk.chunk.local_chunks.get(&CHNL_LABEL) {
             Some(LocalChunk::Channels(chnl)) => Ok(chnl.num_channels as usize),
-            _ => return Err(Error::ChnlChunkHeader),
+            _ => return Err(Error::ChnlNumber),
         }
     }
 
@@ -1063,7 +1062,7 @@ impl fmt::Display for Error {
             Error::FsChunkSize => f.write_str("FS chunk size must be 4."),
             Error::ChnlChunkHeader => f.write_str("Channels chunk must start with 'CHNL'."),
             Error::ChnlChunkSize => f.write_str("CHNL chunk size does not match channel data."),
-            Error::ChnlNumber => f.write_str("CHNL number not supported."),
+            Error::ChnlNumber => f.write_str("CHNL number not found or is unsupported."),
             Error::CmprChunkHeader => f.write_str("Compression type chunk must start with 'CMPR'."),
             Error::CmprChunkSize => f.write_str("CMPR chunk size invalid or inconsistent."),
             Error::AbssChunkHeader => {
