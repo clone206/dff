@@ -160,12 +160,11 @@ impl DffFile {
                         let mut full_buf = Vec::with_capacity(12 + data_buf.len());
                         full_buf.extend_from_slice(&hdr_buf);
                         full_buf.extend_from_slice(&data_buf);
-                        if let Ok(chnl_chunk) = ChannelsChunk::try_from(full_buf.as_slice()) {
-                            prop_chunk_inner
-                                .chunk
-                                .local_chunks
-                                .insert(CHNL_LABEL, LocalChunk::Channels(chnl_chunk));
-                        }
+                        let chnl_chunk = ChannelsChunk::try_from(full_buf.as_slice())?;
+                        prop_chunk_inner
+                            .chunk
+                            .local_chunks
+                            .insert(CHNL_LABEL, LocalChunk::Channels(chnl_chunk));
                     }
                     COMP_LABEL => {
                         let mut data_buf = vec![0u8; ck_data_size as usize];
@@ -173,13 +172,11 @@ impl DffFile {
                         let mut full_buf = Vec::with_capacity(12 + data_buf.len());
                         full_buf.extend_from_slice(&hdr_buf);
                         full_buf.extend_from_slice(&data_buf);
-                        if let Ok(cmpr_chunk) = CompressionTypeChunk::try_from(full_buf.as_slice())
-                        {
-                            prop_chunk_inner
-                                .chunk
-                                .local_chunks
-                                .insert(COMP_LABEL, LocalChunk::CompressionType(cmpr_chunk));
-                        }
+                        let cmpr_chunk = CompressionTypeChunk::try_from(full_buf.as_slice())?;
+                        prop_chunk_inner
+                            .chunk
+                            .local_chunks
+                            .insert(COMP_LABEL, LocalChunk::CompressionType(cmpr_chunk));
                     }
                     ABS_TIME_LABEL => {
                         let mut data_buf = vec![0u8; ck_data_size as usize];
