@@ -211,7 +211,11 @@ impl DffFile {
                         }
                     }
                     _ => {
-                        file.seek(SeekFrom::Current(ck_data_size as i64))?;
+                        file.seek(SeekFrom::Current(if ck_data_size & 1 == 1 {
+                            ck_data_size + 1
+                        } else {
+                            ck_data_size
+                        } as i64))?;
                     }
                 }
             }
@@ -226,8 +230,12 @@ impl DffFile {
             .local_chunks
             .insert(DSD_LABEL, LocalChunk::Dsd(dsd_chunk));
 
-        // Seek past raw DSD audio data
-        file.seek(SeekFrom::Current(dsd_audio_size as i64))?;
+        // Seek past raw DSD audio data + pad byte if odd
+        file.seek(SeekFrom::Current(if dsd_audio_size & 1 == 1 {
+            dsd_audio_size + 1
+        } else {
+            dsd_audio_size
+        } as i64))?;
 
         // Scan any remaining chunks inside the FORM chunk boundary for ID3
         let form_end = frm_chunk.chunk.header.ck_data_size + CHUNK_HEADER_SIZE; // total bytes from start (FORM header at offset 0)
@@ -248,14 +256,19 @@ impl DffFile {
 
             let ck_id = u32_from_byte_buffer(&hdr_buf, 0);
             let ck_data_size = u64_from_byte_buffer(&hdr_buf, std::mem::size_of::<ID>());
+            let padded_size = if ck_data_size & 1 == 1 {
+                ck_data_size + 1
+            } else {
+                ck_data_size
+            };
             // If payload would exceed FORM boundary, stop.
-            if pos + CHUNK_HEADER_SIZE + ck_data_size > form_end {
+            if pos + CHUNK_HEADER_SIZE + padded_size > form_end {
                 break;
             }
 
             if ck_id != ID3_LABEL {
                 // Skip unknown/non-ID3 chunk payload
-                file.seek(SeekFrom::Current(ck_data_size as i64))?;
+                file.seek(SeekFrom::Current(padded_size as i64))?;
                 continue;
             }
 
@@ -350,7 +363,6 @@ impl DffFile {
         };
         Ok(fver_chunk.format_version)
     }
-
 }
 impl fmt::Display for DffFile {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
