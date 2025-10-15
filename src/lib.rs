@@ -908,7 +908,7 @@ impl fmt::Display for Error {
                 f.write_str("Loudspeaker config chunk must start with 'LSCO'.")
             }
             Error::LscoChunkSize => f.write_str("LSCO chunk size invalid or inconsistent."),
-            Error::CmprTypeMismatch => f.write_str("Compression type must be 'DSD '."),
+            Error::CmprTypeMismatch => f.write_str("Compression type must be 'DSD '. DST not supported."),
             Error::Eof => f.write_str("Unexpected end of file."),
         }
     }
