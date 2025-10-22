@@ -290,18 +290,19 @@ impl DffFile {
         let ck_id = u32_from_byte_buffer(&hdr_buf, 0);
         let ck_data_size = u64_from_byte_buffer(&hdr_buf, std::mem::size_of::<ID>());
         let mut data = vec![0u8; ck_data_size as usize];
+        let mut tag_read_err: Option<id3::Error> = None;
+
         if let Err(_e) = self.file.read_exact(&mut data) {
-            return Err(id3::Error::new(
+            tag_read_err = Some(id3::Error::new(
                 id3::ErrorKind::Io(std::io::Error::new(
                     std::io::ErrorKind::Other,
                     "Failed to read complete ID3 chunk data",
                 )),
-                "Failed to read complete ID3 chunk data",
+                "Couldn't fill buffer",
             ));
         }
 
         let mut cursor = std::io::Cursor::new(&data);
-        let mut tag_read_err: Option<id3::Error> = None;
         let tag = match id3::Tag::read_from2(&mut cursor) {
             Ok(t) => Some(t),
             Err(e) => {
