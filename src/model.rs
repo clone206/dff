@@ -3,6 +3,8 @@ use std::collections::HashMap;
 
 use id3::Tag;
 
+use crate::DffFile;
+
 pub type Uchar = u8;
 pub type Ushort = u16;
 pub type Ulong = u32;
@@ -20,34 +22,18 @@ pub const COMP_LABEL: ID = u32::from_be_bytes(*b"CMPR");
 pub const ABS_TIME_LABEL: ID = u32::from_be_bytes(*b"ABSS");
 pub const LS_CONF_LABEL: ID = u32::from_be_bytes(*b"LSCO");
 pub const ID3_LABEL: ID = u32::from_be_bytes(*b"ID3 ");
-pub const BLOCK_SIZE: usize = 1;
 
 #[derive(Debug)]
 pub enum Error {
-    BlockSizePerChannelNonStandard,
-    ChannelNum,
-    ChannelType,
-    DataChunkHeader,
     DsdChunkHeader,
     DsdChunkSize,
-    FmtChunkHeader,
-    FmtChunkSize,
-    FormatId,
-    FormatVersion,
-    Id3Error(id3::Error),
+    Id3Error(id3::Error, DffFile),
     IoError(io::Error),
-    ReservedNotZero,
-    ChannelIndexOutOfRange,
-    SampleIndexOutOfRange,
-    FrameIndexOutOfRange,
-    // Added:
     FormChunkHeader,
     FormTypeMismatch,
-    // NEW for FVER:
     FverChunkHeader,
     FverChunkSize,
     FverUnsupportedVersion,
-    // NEW for PROP / FS / CHNL:
     PropChunkHeader,
     PropChunkType,
     FsChunkHeader,
@@ -57,12 +43,10 @@ pub enum Error {
     ChnlNumber,
     CmprChunkHeader,
     CmprChunkSize,
-    // NEW for ABSS / LSCO:
     AbssChunkHeader,
     AbssChunkSize,
     LscoChunkHeader,
     LscoChunkSize,
-    // NEW: compression type mismatch
     CmprTypeMismatch,
     PrematureTagFound(String),
     Eof,
@@ -133,8 +117,6 @@ pub struct CompressionTypeChunk {
     pub compression_type: ID,
     pub compression_name: String,
 }
-
-/// Additional chunk types (ABSS and LSCO)
 
 #[derive(Debug, Clone)]
 pub struct AbsoluteStartTimeChunk {

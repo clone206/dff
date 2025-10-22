@@ -28,7 +28,7 @@
 //! ```
 
 mod id3_display;
-mod model;
+pub mod model;
 
 use crate::model::*;
 use id3::Tag;
@@ -43,45 +43,12 @@ use std::io::prelude::*;
 use std::path::Path;
 use std::u64;
 
+#[derive(Debug)]
 pub struct DffFile {
     file: File,
     frm_chunk: FormDsdChunk,
     dsd_data_offset: u64,
     dsd_audio_size: u64,
-}
-
-// Helper: scan forward for a chunk header matching `want_label`, error if `abort_label` appears first.
-// Returns the 12-byte header (ID + size). Skips payload (and pad byte if size is odd) of non-matching chunks.
-fn scan_until(
-    file: &mut File,
-    want_label: u32,
-    abort_label: Option<u32>,
-) -> Result<[u8; CHUNK_HEADER_SIZE as usize], Error> {
-    loop {
-        let mut hdr = [0u8; CHUNK_HEADER_SIZE as usize];
-        match file.read_exact(&mut hdr) {
-            Ok(_) => {}
-            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
-                return Err(Error::Eof);
-            }
-            Err(e) => return Err(Error::IoError(e)),
-        }
-        let ck_id = u32_from_byte_buffer(&hdr, 0);
-        let ck_data_size = u64_from_byte_buffer(&hdr, 4);
-        if ck_id == want_label {
-            return Ok(hdr);
-        } else if Some(ck_id) == abort_label {
-            return Err(Error::PrematureTagFound(
-                String::from_utf8_lossy(&ck_id.to_be_bytes()).to_string(),
-            ));
-        } else {
-            // Skip payload + pad if odd
-            file.seek(SeekFrom::Current(ck_data_size as i64))?;
-            if ck_data_size & 1 == 1 {
-                file.seek(SeekFrom::Current(1))?;
-            }
-        }
-    }
 }
 
 impl DffFile {
@@ -234,71 +201,26 @@ impl DffFile {
             dsd_audio_size
         } as i64))?;
 
-        // Scan any remaining chunks inside the FORM chunk boundary for ID3
-        let form_end = frm_chunk.chunk.header.ck_data_size + CHUNK_HEADER_SIZE; // total bytes from start (FORM header at offset 0)
-        loop {
-            let pos = file.stream_position()?;
-            // Ensure we have room for another chunk header fully inside FORM
-            if pos + CHUNK_HEADER_SIZE > form_end {
-                break;
-            }
-
-            // Read potential header
-            if let Err(e) = file.read_exact(&mut hdr_buf) {
-                if e.kind() == io::ErrorKind::UnexpectedEof {
-                    break;
-                }
-                return Err(e.into());
-            }
-
-            let ck_id = u32_from_byte_buffer(&hdr_buf, 0);
-            let ck_data_size = u64_from_byte_buffer(&hdr_buf, std::mem::size_of::<ID>());
-            let padded_size = if ck_data_size & 1 == 1 {
-                ck_data_size + 1
-            } else {
-                ck_data_size
-            };
-            // If payload would exceed FORM boundary, stop.
-            if pos + CHUNK_HEADER_SIZE + padded_size > form_end {
-                break;
-            }
-
-            if ck_id != ID3_LABEL {
-                // Skip unknown/non-ID3 chunk payload
-                file.seek(SeekFrom::Current(padded_size as i64))?;
-                continue;
-            }
-
-            // Read ID3 data
-            let mut data = vec![0u8; ck_data_size as usize];
-            file.read_exact(&mut data)?;
-
-            // Use non-deprecated API: read_from2 requires Read + Seek; use a Cursor over the data
-            let mut cursor = std::io::Cursor::new(&data);
-            let tag = id3::Tag::read_from2(&mut cursor).ok();
-            let id3_chunk = Id3Chunk {
-                chunk: Chunk::new(ChunkHeader {
-                    ck_id,
-                    ck_data_size,
-                }),
-                tag,
-            };
-
-            frm_chunk
-                .chunk
-                .local_chunks
-                .insert(ID3_LABEL, LocalChunk::Id3(id3_chunk));
-
-            // Only one expected; break after storing
-            break;
-        }
-
-        Ok(DffFile {
+        // If we got this far, we have enough for at least a basic dff file
+        let mut dff_file = DffFile {
             file,
             frm_chunk,
             dsd_data_offset,
             dsd_audio_size,
-        })
+        };
+
+        // Now look for an ID3 tag
+        hdr_buf = match scan_until(&mut dff_file.file, ID3_LABEL, None) {
+            Ok(buf) => buf,
+            Err(_e) => {
+                return Ok(dff_file);
+            }
+        };
+
+        match dff_file.add_id3_chunk(hdr_buf) {
+            Ok(()) => return Ok(dff_file),
+            Err(e) => return Err(Error::Id3Error(e, dff_file))
+        };
     }
 
     /// Return a reference to the underlying [File](std::fs::File).
@@ -360,7 +282,57 @@ impl DffFile {
         };
         Ok(fver_chunk.format_version)
     }
+
+    fn add_id3_chunk(
+        &mut self,
+        hdr_buf: [u8; CHUNK_HEADER_SIZE as usize],
+    ) -> Result<(), id3::Error> {
+        let ck_id = u32_from_byte_buffer(&hdr_buf, 0);
+        let ck_data_size = u64_from_byte_buffer(&hdr_buf, std::mem::size_of::<ID>());
+        let mut data = vec![0u8; ck_data_size as usize];
+        if let Err(_e) = self.file.read_exact(&mut data) {
+            return Err(id3::Error::new(
+                id3::ErrorKind::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    "Failed to read complete ID3 chunk data",
+                )),
+                "Failed to read complete ID3 chunk data",
+            ));
+        }
+
+        let mut cursor = std::io::Cursor::new(&data);
+        let mut tag_read_err: Option<id3::Error> = None;
+        let tag = match id3::Tag::read_from2(&mut cursor) {
+            Ok(t) => Some(t),
+            Err(e) => {
+                let partial_tag = e.partial_tag.clone();
+                tag_read_err = Some(e);
+                partial_tag
+            }
+        };
+
+        if tag.is_some() {
+            let id3_chunk = Id3Chunk {
+                chunk: Chunk::new(ChunkHeader {
+                    ck_id,
+                    ck_data_size,
+                }),
+                tag,
+            };
+
+            self.frm_chunk
+                .chunk
+                .local_chunks
+                .insert(ID3_LABEL, LocalChunk::Id3(id3_chunk));
+        }
+
+        if tag_read_err.is_some() {
+            return Err(tag_read_err.unwrap());
+        }
+        Ok(())
+    }
 }
+
 impl fmt::Display for DffFile {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(
@@ -379,6 +351,40 @@ impl fmt::Display for DffFile {
                 String::from("No ID3 tag present.")
             }
         )
+    }
+}
+
+/// Helper: scan forward for a chunk header matching `want_label`, error if `abort_label` appears first.
+/// Returns the 12-byte header (ID + size). Skips payload (and pad byte if size is odd) of non-matching chunks.
+fn scan_until(
+    file: &mut File,
+    want_label: u32,
+    abort_label: Option<u32>,
+) -> Result<[u8; CHUNK_HEADER_SIZE as usize], Error> {
+    loop {
+        let mut hdr = [0u8; CHUNK_HEADER_SIZE as usize];
+        match file.read_exact(&mut hdr) {
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => {
+                return Err(Error::Eof);
+            }
+            Err(e) => return Err(Error::IoError(e)),
+        }
+        let ck_id = u32_from_byte_buffer(&hdr, 0);
+        let ck_data_size = u64_from_byte_buffer(&hdr, std::mem::size_of::<ID>());
+        if ck_id == want_label {
+            return Ok(hdr);
+        } else if Some(ck_id) == abort_label {
+            return Err(Error::PrematureTagFound(
+                String::from_utf8_lossy(&ck_id.to_be_bytes()).to_string(),
+            ));
+        } else {
+            // Skip payload + pad if odd
+            file.seek(SeekFrom::Current(ck_data_size as i64))?;
+            if ck_data_size & 1 == 1 {
+                file.seek(SeekFrom::Current(1))?;
+            }
+        }
     }
 }
 
@@ -820,10 +826,10 @@ impl fmt::Display for DsdChunk {
     }
 }
 
-impl TryFrom<[u8; 12]> for DsdChunk {
+impl TryFrom<[u8; CHUNK_HEADER_SIZE as usize]> for DsdChunk {
     type Error = Error;
 
-    fn try_from(buf: [u8; 12]) -> Result<Self, Self::Error> {
+    fn try_from(buf: [u8; CHUNK_HEADER_SIZE as usize]) -> Result<Self, Self::Error> {
         let ck_id = {
             let mut a = [0u8; 4];
             a.copy_from_slice(&buf[0..4]);
@@ -853,37 +859,15 @@ impl TryFrom<[u8; 12]> for DsdChunk {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::BlockSizePerChannelNonStandard => write!(
-                f,
-                "A fmt chunk is expected to specify its block size per channel as {}.",
-                BLOCK_SIZE
-            ),
-            Error::ChannelNum => {
-                f.write_str("A fmt chunk’s channel num is expected to be in the range 1–6.")
-            }
-            Error::ChannelType => {
-                f.write_str("A fmt chunk’s channel type is expected to be in the range 1–7.")
-            }
-            Error::DataChunkHeader => f.write_str("A data chunk must start with the bytes 'data'."),
             Error::DsdChunkHeader => f.write_str("A DSD chunk must start with the bytes 'DSD '."),
             Error::DsdChunkSize => f.write_str("A DSD chunk must not have size 0."),
-            Error::FmtChunkHeader => f.write_str("A fmt chunk must start with the bytes 'fmt '."),
-            Error::FmtChunkSize => {
-                f.write_str("A fmt chunk is expected to specify its size as 52 bytes.")
+            Error::Id3Error(id3_error, dff_file) => {
+                write!(f, "Id3 error: {} in file: {}", id3_error, dff_file)
             }
-            Error::FormatId => f.write_str("A fmt chumk must specifiy a format ID of 0."),
-            Error::FormatVersion => f.write_str("A fmt chunk must specify version 1."),
-            Error::Id3Error(id3_error) => write!(f, "Id3 error: {}", id3_error),
             Error::IoError(io_error) => write!(f, "IO error: {}", io_error),
             Error::PrematureTagFound(e) => {
                 write!(f, "Chunk {} was found before it should have been.", e)
             }
-            Error::ReservedNotZero => {
-                f.write_str("A fmt chunk’s reserved space is expected to be zero filled.")
-            }
-            Error::ChannelIndexOutOfRange => f.write_str("Channel index is out of range."),
-            Error::SampleIndexOutOfRange => f.write_str("Sample index is out of range."),
-            Error::FrameIndexOutOfRange => f.write_str("Frame index is out of range."),
             Error::FormChunkHeader => f.write_str("FORM chunk must start with 'FRM8'."),
             Error::FormTypeMismatch => f.write_str("FORM chunk form type must be 'DSD '."),
             Error::FverChunkHeader => f.write_str("Format Version chunk must start with 'FVER'."),
@@ -908,7 +892,9 @@ impl fmt::Display for Error {
                 f.write_str("Loudspeaker config chunk must start with 'LSCO'.")
             }
             Error::LscoChunkSize => f.write_str("LSCO chunk size invalid or inconsistent."),
-            Error::CmprTypeMismatch => f.write_str("Compression type must be 'DSD '. DST not supported."),
+            Error::CmprTypeMismatch => {
+                f.write_str("Compression type must be 'DSD '. DST not supported.")
+            }
             Error::Eof => f.write_str("Unexpected end of file."),
         }
     }
@@ -917,7 +903,6 @@ impl fmt::Display for Error {
 impl std::error::Error for Error {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         match self {
-            Error::Id3Error(id3_error) => Some(id3_error),
             Error::IoError(io_error) => Some(io_error),
             _ => None,
         }
@@ -927,12 +912,6 @@ impl std::error::Error for Error {
 impl From<io::Error> for Error {
     fn from(error: io::Error) -> Self {
         Error::IoError(error)
-    }
-}
-
-impl From<id3::Error> for Error {
-    fn from(error: id3::Error) -> Self {
-        Error::Id3Error(error)
     }
 }
 
