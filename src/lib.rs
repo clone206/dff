@@ -283,6 +283,7 @@ impl DffFile {
         Ok(fver_chunk.format_version)
     }
 
+    /// Add an ID3 chunk to the DFF file's FORM chunk.
     fn add_id3_chunk(
         &mut self,
         hdr_buf: [u8; CHUNK_HEADER_SIZE as usize],
