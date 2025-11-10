@@ -15,7 +15,7 @@
 //! `my/music.dff`.
 //!
 //!```no_run
-//! use dsf::DffFile;
+//! use dff::DffFile;
 //! use std::path::Path;
 //!
 //! let path = Path::new("my/music.dff");
@@ -1009,7 +1009,7 @@ mod tests {
 
     #[test]
     fn display_file() {
-        let filename = "test.dff";
+        let filename = "1kHz.dff";
         let path = Path::new(filename);
 
         match DffFile::open(path) {

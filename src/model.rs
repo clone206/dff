@@ -1,3 +1,5 @@
+//! DFF File Model
+
 use std::io;
 use std::collections::HashMap;
 
@@ -64,8 +66,6 @@ pub enum LocalChunk {
     Dsd(#[allow(dead_code)] DsdChunk),
     Id3(Id3Chunk), // NEW
 }
-
-/// DFF File Model
 
 #[repr(C, packed)]
 #[derive(Debug, Copy, Clone)]
