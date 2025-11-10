@@ -16,7 +16,7 @@ This example displays the metadata for the DFF file
 `my/music.dff`.
 
 ```Rust
-use dff::DffFile;
+use dff_meta::DffFile;
 use std::path::Path;
 
 let path = Path::new("my/music.dff");

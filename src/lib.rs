@@ -22,7 +22,7 @@
 //! `my/music.dff`.
 //!
 //!```no_run
-//! use dff::DffFile;
+//! use dff_meta::DffFile;
 //! use std::path::Path;
 //!
 //! let path = Path::new("my/music.dff");
