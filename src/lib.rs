@@ -8,12 +8,13 @@
 //! 
 //! This library allows you to read DFF file metadata, and provides a 
 //! reference to the underlying file itself.It is up to the user to decide 
-//! how to read the sound data, using audio data offset and audio length 
-//! metadata from the DffFile object to seek to and read the audio bytes 
+//! how to read the sound data, using metadata including data offset and 
+//! audio length from the DffFile object to seek to and read the audio bytes 
 //! from the underlying file.
 //!
 //! Only supports ID3 tags that appear at the end of the file, not
-//! those found in the property chunk. DST is not supported.
+//! those found in the property chunk. DST is not supported. Mostly
+//! geared toward stereo and mono audio.
 //!
 //! # Examples
 //!
