@@ -5,7 +5,7 @@
 //! how the audio data is encoded. It can also optionally include an
 //! [`ID3v2`](http://id3.org/) tag which contains metadata about the
 //! music e.g. artist, album, etc.
-//! 
+//!
 //! Only supports ID3 tags that appear at the end of the file, not
 //! those found in the property chunk. DST is not supported.
 //!
@@ -82,8 +82,7 @@ impl DffFile {
             .insert(FVER_LABEL, LocalChunk::FormatVersion(fver_chunk));
 
         // Locate PROP (abort if DSD encountered first)
-        let mut hdr_buf =
-            scan_until(&mut file, PROP_LABEL, Some(DSD_LABEL))?;
+        let mut hdr_buf = scan_until(&mut file, PROP_LABEL, Some(DSD_LABEL))?;
         chunk_buf16[0..12].copy_from_slice(&hdr_buf);
         // Read property_type (4 bytes) then build 16-byte buffer
         file.read_exact(&mut prop_buf4)?;
@@ -95,20 +94,16 @@ impl DffFile {
             .local_chunks
             .insert(PROP_LABEL, LocalChunk::Property(pc));
 
-        let prop_data_size =
-            match frm_chunk.chunk.local_chunks.get(&PROP_LABEL) {
-                Some(LocalChunk::Property(prop)) => {
-                    prop.chunk.header.ck_data_size
-                }
-                _ => return Err(Error::PropChunkHeader),
-            };
+        let prop_data_size = match frm_chunk.chunk.local_chunks.get(&PROP_LABEL) {
+            Some(LocalChunk::Property(prop)) => prop.chunk.header.ck_data_size,
+            _ => return Err(Error::PropChunkHeader),
+        };
         let prop_data_offset = file.stream_position()? - 4;
 
         if let Some(LocalChunk::Property(prop_chunk_inner)) =
             frm_chunk.chunk.local_chunks.get_mut(&PROP_LABEL)
         {
-            while file.stream_position()?
-                < prop_data_offset + prop_data_size as u64
+            while file.stream_position()? < prop_data_offset + prop_data_size as u64
                 && file.read_exact(&mut hdr_buf).is_ok()
             {
                 let ck_id = u32_from_byte_buffer(&hdr_buf, 0);
@@ -121,93 +116,73 @@ impl DffFile {
                         let fs_chunk = SampleRateChunk::try_from({
                             let mut buf = [0u8; 16];
                             buf[0..12].copy_from_slice(&hdr_buf);
-                            buf[12..16]
-                                .copy_from_slice(&chunk_data_buffer);
+                            buf[12..16].copy_from_slice(&chunk_data_buffer);
                             buf
                         })?;
-                        prop_chunk_inner.chunk.local_chunks.insert(
-                            FS_LABEL,
-                            LocalChunk::SampleRate(fs_chunk),
-                        );
+                        prop_chunk_inner
+                            .chunk
+                            .local_chunks
+                            .insert(FS_LABEL, LocalChunk::SampleRate(fs_chunk));
                     }
                     CHNL_LABEL => {
-                        let mut data_buf =
-                            vec![0u8; ck_data_size as usize];
+                        let mut data_buf = vec![0u8; ck_data_size as usize];
                         file.read_exact(&mut data_buf)?;
-                        let mut full_buf =
-                            Vec::with_capacity(12 + data_buf.len());
+                        let mut full_buf = Vec::with_capacity(12 + data_buf.len());
                         full_buf.extend_from_slice(&hdr_buf);
                         full_buf.extend_from_slice(&data_buf);
-                        let chnl_chunk =
-                            ChannelsChunk::try_from(full_buf.as_slice())?;
-                        prop_chunk_inner.chunk.local_chunks.insert(
-                            CHNL_LABEL,
-                            LocalChunk::Channels(chnl_chunk),
-                        );
+                        let chnl_chunk = ChannelsChunk::try_from(full_buf.as_slice())?;
+                        prop_chunk_inner
+                            .chunk
+                            .local_chunks
+                            .insert(CHNL_LABEL, LocalChunk::Channels(chnl_chunk));
                     }
                     COMP_LABEL => {
-                        let mut data_buf =
-                            vec![0u8; ck_data_size as usize];
+                        let mut data_buf = vec![0u8; ck_data_size as usize];
                         file.read_exact(&mut data_buf)?;
-                        let mut full_buf =
-                            Vec::with_capacity(12 + data_buf.len());
+                        let mut full_buf = Vec::with_capacity(12 + data_buf.len());
                         full_buf.extend_from_slice(&hdr_buf);
                         full_buf.extend_from_slice(&data_buf);
-                        let cmpr_chunk = CompressionTypeChunk::try_from(
-                            full_buf.as_slice(),
-                        )?;
-                        prop_chunk_inner.chunk.local_chunks.insert(
-                            COMP_LABEL,
-                            LocalChunk::CompressionType(cmpr_chunk),
-                        );
+                        let cmpr_chunk = CompressionTypeChunk::try_from(full_buf.as_slice())?;
+                        prop_chunk_inner
+                            .chunk
+                            .local_chunks
+                            .insert(COMP_LABEL, LocalChunk::CompressionType(cmpr_chunk));
                     }
                     ABS_TIME_LABEL => {
-                        let mut data_buf =
-                            vec![0u8; ck_data_size as usize];
+                        let mut data_buf = vec![0u8; ck_data_size as usize];
                         file.read_exact(&mut data_buf)?;
-                        let mut full_buf =
-                            Vec::with_capacity(12 + data_buf.len());
+                        let mut full_buf = Vec::with_capacity(12 + data_buf.len());
                         full_buf.extend_from_slice(&hdr_buf);
                         full_buf.extend_from_slice(&data_buf);
-                        if let Ok(abs_chunk) =
-                            AbsoluteStartTimeChunk::try_from(
-                                full_buf.as_slice(),
-                            )
+                        if let Ok(abs_chunk) = AbsoluteStartTimeChunk::try_from(full_buf.as_slice())
                         {
-                            prop_chunk_inner.chunk.local_chunks.insert(
-                                ABS_TIME_LABEL,
-                                LocalChunk::AbsoluteStartTime(abs_chunk),
-                            );
+                            prop_chunk_inner
+                                .chunk
+                                .local_chunks
+                                .insert(ABS_TIME_LABEL, LocalChunk::AbsoluteStartTime(abs_chunk));
                         }
                     }
                     LS_CONF_LABEL => {
-                        let mut data_buf =
-                            vec![0u8; ck_data_size as usize];
+                        let mut data_buf = vec![0u8; ck_data_size as usize];
                         file.read_exact(&mut data_buf)?;
-                        let mut full_buf =
-                            Vec::with_capacity(12 + data_buf.len());
+                        let mut full_buf = Vec::with_capacity(12 + data_buf.len());
                         full_buf.extend_from_slice(&hdr_buf);
                         full_buf.extend_from_slice(&data_buf);
                         if let Ok(lsco_chunk) =
-                            LoudspeakerConfigChunk::try_from(
-                                full_buf.as_slice(),
-                            )
+                            LoudspeakerConfigChunk::try_from(full_buf.as_slice())
                         {
-                            prop_chunk_inner.chunk.local_chunks.insert(
-                                LS_CONF_LABEL,
-                                LocalChunk::LoudspeakerConfig(lsco_chunk),
-                            );
+                            prop_chunk_inner
+                                .chunk
+                                .local_chunks
+                                .insert(LS_CONF_LABEL, LocalChunk::LoudspeakerConfig(lsco_chunk));
                         }
                     }
                     _ => {
-                        file.seek(SeekFrom::Current(if ck_data_size & 1
-                            == 1
-                        {
+                        file.seek(SeekFrom::Current(if ck_data_size & 1 == 1 {
                             ck_data_size + 1
                         } else {
                             ck_data_size
-                        }
-                            as i64))?;
+                        } as i64))?;
                     }
                 }
             }
@@ -269,26 +244,22 @@ impl DffFile {
 
     /// Return the number of audio channels.
     pub fn get_num_channels(&self) -> Result<usize, Error> {
-        let prop_chunk =
-            match self.frm_chunk.chunk.local_chunks.get(&PROP_LABEL) {
-                Some(LocalChunk::Property(prop)) => prop,
-                _ => return Err(Error::PropChunkHeader),
-            };
+        let prop_chunk = match self.frm_chunk.chunk.local_chunks.get(&PROP_LABEL) {
+            Some(LocalChunk::Property(prop)) => prop,
+            _ => return Err(Error::PropChunkHeader),
+        };
         match prop_chunk.chunk.local_chunks.get(&CHNL_LABEL) {
-            Some(LocalChunk::Channels(chnl)) => {
-                Ok(chnl.num_channels as usize)
-            }
+            Some(LocalChunk::Channels(chnl)) => Ok(chnl.num_channels as usize),
             _ => return Err(Error::ChnlNumber),
         }
     }
 
     /// Return the sample rate in Hz.
     pub fn get_sample_rate(&self) -> Result<u32, Error> {
-        let prop_chunk =
-            match self.frm_chunk.chunk.local_chunks.get(&PROP_LABEL) {
-                Some(LocalChunk::Property(prop)) => prop,
-                _ => return Err(Error::PropChunkHeader),
-            };
+        let prop_chunk = match self.frm_chunk.chunk.local_chunks.get(&PROP_LABEL) {
+            Some(LocalChunk::Property(prop)) => prop,
+            _ => return Err(Error::PropChunkHeader),
+        };
         match prop_chunk.chunk.local_chunks.get(&FS_LABEL) {
             Some(LocalChunk::SampleRate(fs)) => Ok(fs.sample_rate),
             _ => return Err(Error::FsChunkHeader),
@@ -316,11 +287,10 @@ impl DffFile {
 
     /// Return the DFF format version number.
     pub fn get_dff_version(&self) -> Result<u32, Error> {
-        let fver_chunk =
-            match self.frm_chunk.chunk.local_chunks.get(&FVER_LABEL) {
-                Some(LocalChunk::FormatVersion(fver)) => fver,
-                _ => return Err(Error::FverChunkHeader),
-            };
+        let fver_chunk = match self.frm_chunk.chunk.local_chunks.get(&FVER_LABEL) {
+            Some(LocalChunk::FormatVersion(fver)) => fver,
+            _ => return Err(Error::FverChunkHeader),
+        };
         Ok(fver_chunk.format_version)
     }
 
@@ -330,8 +300,7 @@ impl DffFile {
         hdr_buf: [u8; CHUNK_HEADER_SIZE as usize],
     ) -> Result<(), id3::Error> {
         let ck_id = u32_from_byte_buffer(&hdr_buf, 0);
-        let ck_data_size =
-            u64_from_byte_buffer(&hdr_buf, std::mem::size_of::<ID>());
+        let ck_data_size = u64_from_byte_buffer(&hdr_buf, std::mem::size_of::<ID>());
         let mut data = vec![0u8; ck_data_size as usize];
         let mut tag_read_err: Option<id3::Error> = None;
 
@@ -415,8 +384,7 @@ fn scan_until(
             Err(e) => return Err(Error::IoError(e)),
         }
         let ck_id = u32_from_byte_buffer(&hdr, 0);
-        let ck_data_size =
-            u64_from_byte_buffer(&hdr, std::mem::size_of::<ID>());
+        let ck_data_size = u64_from_byte_buffer(&hdr, std::mem::size_of::<ID>());
         if ck_id == want_label {
             return Ok(hdr);
         } else if Some(ck_id) == abort_label {
@@ -463,8 +431,7 @@ impl Chunk {
 impl FormDsdChunk {
     #[inline]
     pub fn is_valid(&self) -> bool {
-        self.chunk.header.ck_id == u32::from_be_bytes(*b"FRM8")
-            && self.form_type == DSD_LABEL
+        self.chunk.header.ck_id == u32::from_be_bytes(*b"FRM8") && self.form_type == DSD_LABEL
     }
 }
 
@@ -751,9 +718,7 @@ impl TryFrom<&[u8]> for CompressionTypeChunk {
         }
         // New check: must be 'DSD '
         // DST not yet implemented
-        if chunk.compression_type != DSD_LABEL
-            || chunk.compression_name == "DST Encoded"
-        {
+        if chunk.compression_type != DSD_LABEL || chunk.compression_name == "DST Encoded" {
             return Err(Error::CmprTypeMismatch);
         }
         Ok(chunk)
@@ -877,9 +842,7 @@ impl fmt::Display for DsdChunk {
 impl TryFrom<[u8; CHUNK_HEADER_SIZE as usize]> for DsdChunk {
     type Error = Error;
 
-    fn try_from(
-        buf: [u8; CHUNK_HEADER_SIZE as usize],
-    ) -> Result<Self, Self::Error> {
+    fn try_from(buf: [u8; CHUNK_HEADER_SIZE as usize]) -> Result<Self, Self::Error> {
         let ck_id = {
             let mut a = [0u8; 4];
             a.copy_from_slice(&buf[0..4]);
@@ -909,12 +872,8 @@ impl TryFrom<[u8; CHUNK_HEADER_SIZE as usize]> for DsdChunk {
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::DsdChunkHeader => f.write_str(
-                "A DSD chunk must start with the bytes 'DSD '.",
-            ),
-            Error::DsdChunkSize => {
-                f.write_str("A DSD chunk must not have size 0.")
-            }
+            Error::DsdChunkHeader => f.write_str("A DSD chunk must start with the bytes 'DSD '."),
+            Error::DsdChunkSize => f.write_str("A DSD chunk must not have size 0."),
             Error::Id3Error(id3_error, dff_file) => {
                 write!(f, "Id3 error: {} in file: {}", id3_error, dff_file)
             }
@@ -922,67 +881,35 @@ impl fmt::Display for Error {
                 write!(f, "IO error: {}", io_error)
             }
             Error::PrematureTagFound(e) => {
-                write!(
-                    f,
-                    "Chunk {} was found before it should have been.",
-                    e
-                )
+                write!(f, "Chunk {} was found before it should have been.", e)
             }
-            Error::FormChunkHeader => {
-                f.write_str("FORM chunk must start with 'FRM8'.")
-            }
-            Error::FormTypeMismatch => {
-                f.write_str("FORM chunk form type must be 'DSD '.")
-            }
-            Error::FverChunkHeader => {
-                f.write_str("Format Version chunk must start with 'FVER'.")
-            }
-            Error::FverChunkSize => {
-                f.write_str("FVER chunk data size must be 4.")
-            }
+            Error::FormChunkHeader => f.write_str("FORM chunk must start with 'FRM8'."),
+            Error::FormTypeMismatch => f.write_str("FORM chunk form type must be 'DSD '."),
+            Error::FverChunkHeader => f.write_str("Format Version chunk must start with 'FVER'."),
+            Error::FverChunkSize => f.write_str("FVER chunk data size must be 4."),
             Error::FverUnsupportedVersion => {
                 f.write_str("Unsupported format version in FVER chunk.")
             }
-            Error::PropChunkHeader => {
-                f.write_str("Property chunk must start with 'PROP'.")
-            }
-            Error::PropChunkType => {
-                f.write_str("Property chunk type must be 'SND '.")
-            }
-            Error::FsChunkHeader => {
-                f.write_str("Sample rate chunk must start with 'FS  '.")
-            }
+            Error::PropChunkHeader => f.write_str("Property chunk must start with 'PROP'."),
+            Error::PropChunkType => f.write_str("Property chunk type must be 'SND '."),
+            Error::FsChunkHeader => f.write_str("Sample rate chunk must start with 'FS  '."),
             Error::FsChunkSize => f.write_str("FS chunk size must be 4."),
-            Error::ChnlChunkHeader => {
-                f.write_str("Channels chunk must start with 'CHNL'.")
+            Error::ChnlChunkHeader => f.write_str("Channels chunk must start with 'CHNL'."),
+            Error::ChnlChunkSize => f.write_str("CHNL chunk size does not match channel data."),
+            Error::ChnlNumber => f.write_str("CHNL number not found or is unsupported."),
+            Error::CmprChunkHeader => f.write_str("Compression type chunk must start with 'CMPR'."),
+            Error::CmprChunkSize => f.write_str("CMPR chunk size invalid or inconsistent."),
+            Error::AbssChunkHeader => {
+                f.write_str("Absolute start time chunk must start with 'ABSS'.")
             }
-            Error::ChnlChunkSize => {
-                f.write_str("CHNL chunk size does not match channel data.")
+            Error::AbssChunkSize => f.write_str("ABSS chunk size invalid."),
+            Error::LscoChunkHeader => {
+                f.write_str("Loudspeaker config chunk must start with 'LSCO'.")
             }
-            Error::ChnlNumber => {
-                f.write_str("CHNL number not found or is unsupported.")
+            Error::LscoChunkSize => f.write_str("LSCO chunk size invalid or inconsistent."),
+            Error::CmprTypeMismatch => {
+                f.write_str("Compression type must be 'DSD '. DST not supported.")
             }
-            Error::CmprChunkHeader => f.write_str(
-                "Compression type chunk must start with 'CMPR'.",
-            ),
-            Error::CmprChunkSize => {
-                f.write_str("CMPR chunk size invalid or inconsistent.")
-            }
-            Error::AbssChunkHeader => f.write_str(
-                "Absolute start time chunk must start with 'ABSS'.",
-            ),
-            Error::AbssChunkSize => {
-                f.write_str("ABSS chunk size invalid.")
-            }
-            Error::LscoChunkHeader => f.write_str(
-                "Loudspeaker config chunk must start with 'LSCO'.",
-            ),
-            Error::LscoChunkSize => {
-                f.write_str("LSCO chunk size invalid or inconsistent.")
-            }
-            Error::CmprTypeMismatch => f.write_str(
-                "Compression type must be 'DSD '. DST not supported.",
-            ),
             Error::Eof => f.write_str("Unexpected end of file."),
         }
     }
@@ -1005,20 +932,31 @@ impl From<io::Error> for Error {
 
 #[cfg(test)]
 mod tests {
+    use id3::TagLike;
+
     use super::*;
 
     #[test]
-    fn display_file() {
+    fn read_file() {
         let filename = "1kHz.dff";
         let path = Path::new(filename);
+        let dff_file = DffFile::open(path).unwrap();
 
-        match DffFile::open(path) {
-            Ok(dff_file) => {
-                println!("DFF file metadata:\n\n{}", dff_file);
-            }
-            Err(error) => {
-                println!("Error: {}", error);
-            }
-        }
+        assert_eq!(dff_file.get_file_size().unwrap(), 36592);
+        assert_eq!(dff_file.get_form_chunk_size(), 71872);
+        assert_eq!(dff_file.get_dsd_data_offset(), 130);
+        assert_eq!(dff_file.get_audio_length(), 35280);
+        assert_eq!(dff_file.get_num_channels().unwrap(), 2);
+        assert_eq!(dff_file.get_sample_rate().unwrap(), 2822400);
+        assert_eq!(dff_file.get_dff_version().unwrap(), 17104896);
+
+        let tag = dff_file.id3_tag().clone().unwrap();
+
+        assert_eq!(tag.title().unwrap(), ".05 sec 1kHz");
+        assert_eq!(tag.artist().unwrap(), "dff");
+        assert_eq!(tag.album().unwrap(), "Test Tones");
+        assert_eq!(tag.year().unwrap(), 2025);
+        assert_eq!(tag.genre().unwrap(), "Test");
+        assert_eq!(tag.track().unwrap(), 1);
     }
 }
