@@ -37,7 +37,7 @@ dependencies = [
 
 [[package]]
 name = "dff-meta"
-version = "0.1.2"
+version = "0.1.3"
 dependencies = [
  "id3",
 ]

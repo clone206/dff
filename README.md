@@ -23,10 +23,36 @@ let path = Path::new("my/music.dff");
 
 match DffFile::open(path) {
     Ok(dff_file) => {
-        println!("DFF file metadata:\n\n{}", dff_file);
+        eprintln!("DFF file metadata:\n\n{}", dff_file);
     }
     Err(error) => {
-        println!("Error: {}", error);
+        eprintln!("Error: {}", error);
     }
 }
+```
+
+Recovering from tag read error. The partially read tag, if available,
+will be added to the DffFile object returned in the Id3Error object.
+
+```rust
+use dff_meta::DffFile;
+use dff_meta::model::*;
+use std::path::Path;
+
+let path = Path::new("my/broken_id3.dff");
+
+let dff_file = match DffFile::open(path) {
+    Ok(dff) => dff,
+    Err(Error::Id3Error(e, dff_file)) => {
+        eprintln!(
+            "Attempted read of ID3 tag failed. Partial read attempted: {}",
+            e
+        );
+        dff_file
+    }
+    Err(e) => {
+        eprintln!("Error: {}", e);
+        return;
+    }
+};
 ```
