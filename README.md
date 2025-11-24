@@ -15,7 +15,7 @@ Only supports ID3 tags that appear at the end of the file, not those found in th
 This example displays the metadata for the DFF file
 `my/music.dff`.
 
-```Rust
+```rust
 use dff_meta::DffFile;
 use std::path::Path;
 
