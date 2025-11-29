@@ -8,7 +8,7 @@ music e.g. artist, album, etc.
 
 This library allows you to read DFF file metadata, and provides a reference to the underlying DFF file itself. It is up to the user to decide how to read the sound data, using metadata including offset and audio length from the DffFile object to seek to and read the audio bytes from the underlying file.
 
-Only supports ID3 tags that appear at the end of the file, not those found in the property chunk. DST is not supported. Mostly geared toward mono and stereo audio.
+Only supports ID3 tags that appear at the end of the file, not those found in the property chunk. DST is not supported. Currently only supports mono and stereo audio.
 
 # Examples
 
@@ -31,7 +31,7 @@ match DffFile::open(path) {
 }
 ```
 
-Recovering from tag read error. The partially read tag, if available,
+Example of recovering from tag read error. The partially read tag, if available,
 will be added to the DffFile object returned in the Id3Error object.
 
 ```rust

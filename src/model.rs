@@ -60,10 +60,10 @@ pub enum LocalChunk {
     Property(PropertyChunk),
     SampleRate(SampleRateChunk),
     Channels(ChannelsChunk),
-    CompressionType(#[allow(dead_code)]CompressionTypeChunk),
-    AbsoluteStartTime(#[allow(dead_code)]AbsoluteStartTimeChunk),
-    LoudspeakerConfig(#[allow(dead_code)]LoudspeakerConfigChunk),
-    Dsd(#[allow(dead_code)] DsdChunk),
+    CompressionType(CompressionTypeChunk),
+    AbsoluteStartTime(AbsoluteStartTimeChunk),
+    LoudspeakerConfig(LoudspeakerConfigChunk),
+    Dsd(DsdChunk),
     Id3(Id3Chunk), // NEW
 }
 
