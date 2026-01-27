@@ -8,6 +8,8 @@ music e.g. artist, album, etc.
 
 This library allows you to read DFF file metadata, and provides a reference to the underlying DFF file itself. It is up to the user to decide how to read the sound data, using metadata including offset and audio length from the DffFile object to seek to and read the audio bytes from the underlying file.
 
+For a crate that makes use of this library and does provide access to the audio data, see [`dsd-reader`](https://crates.io/crates/dsd-reader).
+
 Only supports ID3 tags that appear at the end of the file, not those found in the property chunk. DST is not supported. Currently only supports mono and stereo audio.
 
 # Examples
