@@ -67,7 +67,7 @@ mod id3_display;
 pub mod model;
 
 use crate::model::*;
-use dsd_source::{DsdSource, DsdSourceError, DsdSourceInfo, Endianness, FmtType};
+use dsd_source::{DsdSource, DsdSourceError, DsdSourceExtensions, DsdSourceInfo, Endianness, FmtType};
 use id3::Tag;
 use std::collections::HashMap;
 use std::convert::TryFrom;
@@ -383,6 +383,10 @@ impl fmt::Display for DffFile {
             }
         )
     }
+}
+
+impl DsdSourceExtensions for DffFile {
+    const EXTENSIONS: &'static [&'static str] = &["dff"];
 }
 
 impl DsdSource for DffFile {
