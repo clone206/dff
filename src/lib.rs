@@ -394,6 +394,7 @@ impl DsdSource for DffFile {
             block_size: DFF_BLOCK_SIZE,
             sample_rate: self.get_sample_rate()?,
             audio_length: self.get_audio_length(),
+            data_offset: self.dsd_data_offset,
             tag: self.id3_tag().clone(),
         })
     }
