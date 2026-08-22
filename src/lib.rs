@@ -67,6 +67,7 @@ mod id3_display;
 pub mod model;
 
 use crate::model::*;
+use dsd_source::{DsdSource, DsdSourceError, DsdSourceExtensions, DsdSourceInfo, Endianness, FmtType};
 use id3::Tag;
 use std::collections::HashMap;
 use std::convert::TryFrom;
@@ -78,6 +79,11 @@ use std::io::SeekFrom;
 use std::io::prelude::*;
 use std::path::Path;
 use std::u64;
+
+/// DFF audio is interleaved with no inherent block structure, so this is
+/// just a suggested chunking size for reads.
+pub const DFF_BLOCK_SIZE: u32 = 1;
+
 
 #[derive(Debug)]
 pub struct DffFile {
@@ -376,6 +382,31 @@ impl fmt::Display for DffFile {
                 String::from("No ID3 tag present.")
             }
         )
+    }
+}
+
+impl DsdSourceExtensions for DffFile {
+    const EXTENSIONS: &'static [&'static str] = &["dff"];
+}
+
+impl DsdSource for DffFile {
+    fn info(&self) -> Result<DsdSourceInfo, DsdSourceError> {
+        Ok(DsdSourceInfo {
+            channels: self.get_num_channels()?,
+            endianness: Endianness::MsbFirst,
+            layout: FmtType::Interleaved,
+            block_size: DFF_BLOCK_SIZE,
+            sample_rate: self.get_sample_rate()?,
+            audio_length: self.get_audio_length(),
+            data_offset: self.dsd_data_offset,
+            tag: self.id3_tag().clone(),
+        })
+    }
+
+    fn reader(&self) -> Result<Box<dyn Read + Send>, DsdSourceError> {
+        let mut file = self.file.try_clone()?;
+        file.seek(SeekFrom::Start(self.dsd_data_offset))?;
+        Ok(Box::new(file))
     }
 }
 
