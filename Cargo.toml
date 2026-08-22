@@ -1,6 +1,6 @@
 [package]
 name = "dff-meta"
-version = "0.1.6"
+version = "0.2.0"
 authors = ["clone206"]
 edition = "2024"
 description = "DFF (DSDIFF File) metadata support for Rust"
@@ -17,4 +17,4 @@ exclude = [
 
 [dependencies]
 id3 = "1.0.2"
-dsd-source = "0.1.0"
+dsd-source = "0.2.0"

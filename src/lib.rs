@@ -392,11 +392,11 @@ impl DsdSourceExtensions for DffFile {
 impl DsdSource for DffFile {
     fn info(&self) -> Result<DsdSourceInfo, DsdSourceError> {
         Ok(DsdSourceInfo {
-            channels: self.get_num_channels()?,
-            endianness: Endianness::MsbFirst,
-            layout: FmtType::Interleaved,
-            block_size: DFF_BLOCK_SIZE,
-            sample_rate: self.get_sample_rate()?,
+            channels: Some(self.get_num_channels()?),
+            endianness: Some(Endianness::MsbFirst),
+            layout: Some(FmtType::Interleaved),
+            block_size: Some(DFF_BLOCK_SIZE),
+            sample_rate: Some(self.get_sample_rate()?),
             audio_length: self.get_audio_length(),
             data_offset: self.dsd_data_offset,
             tag: self.id3_tag().clone(),
@@ -407,6 +407,10 @@ impl DsdSource for DffFile {
         let mut file = self.file.try_clone()?;
         file.seek(SeekFrom::Start(self.dsd_data_offset))?;
         Ok(Box::new(file))
+    }
+
+    fn file_len(&self) -> Result<u64, DsdSourceError> {
+        Ok(self.file.metadata()?.len())
     }
 }
 
