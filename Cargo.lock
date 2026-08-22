@@ -39,6 +39,14 @@ dependencies = [
 name = "dff-meta"
 version = "0.1.4"
 dependencies = [
+ "dsd-source",
+ "id3",
+]
+
+[[package]]
+name = "dsd-source"
+version = "0.1.0"
+dependencies = [
  "id3",
 ]
 
