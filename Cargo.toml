@@ -17,4 +17,4 @@ exclude = [
 
 [dependencies]
 id3 = "1.0.2"
-dsd-source = { path = "../dsd-source" }
+dsd-source = "0.1.0"
