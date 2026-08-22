@@ -408,6 +408,10 @@ impl DsdSource for DffFile {
         file.seek(SeekFrom::Start(self.dsd_data_offset))?;
         Ok(Box::new(file))
     }
+
+    fn file_len(&self) -> Result<u64, DsdSourceError> {
+        Ok(self.file.metadata()?.len())
+    }
 }
 
 /// Helper: skip `size` bytes in file, plus pad byte if size is odd.
