@@ -45,7 +45,9 @@ dependencies = [
 
 [[package]]
 name = "dsd-source"
-version = "0.1.0"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "abefa93db26ebcaae898dedd37f9a3e8378c369b1c251adf54e73e7f1195aa37"
 dependencies = [
  "id3",
 ]
