@@ -17,4 +17,5 @@ exclude = [
 
 [dependencies]
 id3 = "1.0.2"
-dsd-source = "0.1.0"
+# TEMP local-dev override, revert to a version pin before publishing
+dsd-source = { path = "../dsd-source" }
